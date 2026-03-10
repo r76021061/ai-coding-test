@@ -218,6 +218,10 @@ async function startServer() {
 
   app.use(express.json());
   
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok" });
+  });
+
   // API Route: Trigger Cron Job Manually (for K8s CronJob)
   app.post("/api/trigger-cron", async (req, res) => {
     const { channelId } = req.body;
