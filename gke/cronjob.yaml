@@ -1,0 +1,58 @@
+# 股癌 (Gooaye) 的 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gooaye-summary-cron
+spec:
+  schedule: "0 21 * * *" # 每天晚上 21:00 (UTC 時間請依據您的 K8s 節點時區調整)
+  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            cloud.google.com/gke-spot: "true"
+          tolerations:
+          - key: "cloud.google.com/gke-spot"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          containers:
+          - name: trigger-cron
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"@Gooaye\"}'"
+          restartPolicy: OnFailure
+
+---
+# 游庭皓的財經皓角 的 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: yutinghao-summary-cron
+spec:
+  schedule: "30 8 * * *" # 每天早上 08:30
+  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            cloud.google.com/gke-spot: "true"
+          tolerations:
+          - key: "cloud.google.com/gke-spot"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          containers:
+          - name: trigger-cron
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"@yutinghaofinance\"}'"
+          restartPolicy: OnFailure

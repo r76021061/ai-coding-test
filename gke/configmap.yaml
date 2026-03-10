@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gooaye-summary-config
+data:
+  # 在這裡設定您的環境變數
+  # 注意：請勿將真實的 API Key 提交到 Git，建議改用 Kubernetes Secret
+  CRON_EMAILS: "r76021061@gmail.com"
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "465"
+  DB_PATH: "/app/data/database.sqlite" # 設定 SQLite 檔案存放在 PVC 掛載的目錄
+  # SMTP_USER: "your-email@gmail.com" # 建議使用 Secret
+  # SMTP_PASS: "your-app-password"    # 建議使用 Secret
+  # GEMINI_API_KEY: "your-api-key"    # 建議使用 Secret

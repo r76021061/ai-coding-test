@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gooaye-cronjob
+spec:
+  schedule: "0 21 * * *" # 每天晚上 21:00 執行 (需注意 K8s 叢集的時區，通常為 UTC，若為 UTC 則需改為 13 0 * * *)
+  timeZone: "Asia/Taipei" # 需 K8s 1.27+ 支援 CronJobTimeZone
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            cloud.google.com/gke-spot: "true"
+          tolerations:
+          - key: "cloud.google.com/gke-spot"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          containers:
+          - name: curl
+            image: curlimages/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              curl -X POST -H "Content-Type: application/json" \
+              -d '{"channelId":"@Gooaye"}' \
+              http://<your-web-service-name>.<namespace>.svc.cluster.local:3000/api/trigger-cron
+          restartPolicy: OnFailure
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: yutinghao-cronjob
+spec:
+  schedule: "30 8 * * *" # 每天早上 08:30 執行 (若為 UTC 則需改為 30 0 * * *)
+  timeZone: "Asia/Taipei" # 需 K8s 1.27+ 支援 CronJobTimeZone
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            cloud.google.com/gke-spot: "true"
+          tolerations:
+          - key: "cloud.google.com/gke-spot"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          containers:
+          - name: curl
+            image: curlimages/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              curl -X POST -H "Content-Type: application/json" \
+              -d '{"channelId":"@yutinghaofinance"}' \
+              http://<your-web-service-name>.<namespace>.svc.cluster.local:3000/api/trigger-cron
+          restartPolicy: OnFailure

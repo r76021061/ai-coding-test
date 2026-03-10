@@ -1,0 +1,5 @@
+{
+  "name": "Gooaye AI Summarizer",
+  "description": "自動追蹤股癌最新影片，利用 Gemini AI 進行專業財經摘要，過濾閒聊直達重點。",
+  "requestFramePermissions": []
+}

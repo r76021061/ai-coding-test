@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-[#f5f5f5] text-slate-900 font-sans antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-black/5 overflow-hidden;
+  }
+  
+  .btn-primary {
+    @apply bg-slate-900 text-white px-6 py-3 rounded-xl font-medium hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .markdown-body {
+    @apply prose prose-slate max-w-none;
+    @apply text-slate-700 leading-relaxed;
+  }
+  
+  .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+    @apply text-slate-900 font-semibold mt-6 mb-4;
+  }
+  
+  .markdown-body ul {
+    @apply list-disc pl-5 space-y-2;
+  }
+  
+  .markdown-body li {
+    @apply pl-1;
+  }
+  
+  .markdown-body strong {
+    @apply text-slate-900 font-semibold;
+  }
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
