@@ -1,5 +1,4 @@
 import express from "express";
-import basicAuth from "express-basic-auth";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
@@ -216,19 +215,6 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
-  
-  // Basic Auth Middleware (密碼鎖)
-  app.use((req, res, next) => {
-    // 排除健康檢查和內部 CronJob 觸發的 API
-    if (req.path === '/api/health' || req.path === '/api/trigger-cron') {
-      return next();
-    }
-    return basicAuth({
-      users: { 'home30': '035553095' },
-      challenge: true,
-      realm: 'Finance AI Secretary',
-    })(req, res, next);
-  });
   
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", hasGeminiKey: !!process.env.GEMINI_API_KEY, prefix: process.env.GEMINI_API_KEY?.substring(0, 5) });

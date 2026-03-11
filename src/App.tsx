@@ -25,7 +25,8 @@ import {
   Users,
   Settings,
   Home,
-  PlayCircle
+  PlayCircle,
+  Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -44,9 +45,15 @@ const CHANNELS = [
   { id: 's178_streams', handle: '@s178', type: 'streams', shortName: '郭哲榮 (直播)', name: '郭哲榮分析師-摩爾證券投顧 (直播)' }
 ];
 
-const APP_VERSION = 'Release 2.1.a8f9e2b';
+const APP_VERSION = 'Release 2.2.b7c8d9e';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('app_auth') === 'true';
+  });
+  const [passwordInput, setPasswordInput] = useState('');
+  const [authError, setAuthError] = useState(false);
+
   const [activeTab, setActiveTab] = useState<'home' | 'settings'>('home');
   const [selectedChannel, setSelectedChannel] = useState(CHANNELS[0]);
   const [url, setUrl] = useState('');
@@ -222,6 +229,63 @@ export default function App() {
   const removeEmail = (emailToRemove: string) => {
     setEmails(emails.filter(e => e !== emailToRemove));
   };
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordInput === '035553095') {
+      localStorage.setItem('app_auth', 'true');
+      setIsAuthenticated(true);
+      setAuthError(false);
+    } else {
+      setAuthError(true);
+      setPasswordInput('');
+    }
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans selection:bg-slate-200">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-[3rem] p-8 sm:p-10 shadow-sm border-2 border-slate-200 w-full max-w-md text-center"
+        >
+          <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Lock className="w-12 h-12 text-blue-500" />
+          </div>
+          <h1 className="text-4xl font-extrabold text-slate-900 mb-4">專屬秘書</h1>
+          <p className="text-2xl text-slate-500 mb-8 font-medium">請輸入通關密碼</p>
+          
+          <form onSubmit={handleLogin} className="space-y-6">
+            <div>
+              <input
+                type="tel"
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  setAuthError(false);
+                }}
+                placeholder="請輸入密碼"
+                className={cn(
+                  "w-full text-center text-4xl py-6 rounded-2xl border-4 focus:outline-none transition-colors",
+                  authError ? "border-red-400 bg-red-50 text-red-900" : "border-slate-200 focus:border-blue-500 bg-slate-50"
+                )}
+              />
+              {authError && (
+                <p className="text-red-500 text-xl font-bold mt-4">密碼錯誤，請再試一次！</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              className="w-full bg-blue-600 text-white py-6 rounded-[2rem] font-extrabold text-3xl shadow-xl shadow-blue-600/30 active:scale-95 transition-all"
+            >
+              進入系統
+            </button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 pb-56 font-sans selection:bg-slate-200">

@@ -1,5 +1,7 @@
 # Gooaye Summary App - Kubernetes 部署指南
 
+👉 **[查看開發日誌 (Changelog)](./CHANGELOG.md)**
+
 本專案包含將「股癌/游庭皓影片摘要服務」部署至 Kubernetes (K8s) 的相關設定檔。
 
 ## 部署流程
