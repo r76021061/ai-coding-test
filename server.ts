@@ -16,8 +16,10 @@ dotenv.config();
 
 // Supported Channels
 const CHANNELS = [
-  { id: "@Gooaye", name: "股癌 Gooaye" },
-  { id: "@yutinghaofinance", name: "游庭皓的財經皓角" }
+  { id: 'gooaye_videos', handle: '@Gooaye', type: 'videos', name: '股癌 Gooaye (影片)' },
+  { id: 'yutinghao_streams', handle: '@yutinghaofinance', type: 'streams', name: '游庭皓的財經皓角 (直播)' },
+  { id: 's178_videos', handle: '@s178', type: 'videos', name: '郭哲榮分析師-摩爾證券投顧 (影片)' },
+  { id: 's178_streams', handle: '@s178', type: 'streams', name: '郭哲榮分析師-摩爾證券投顧 (直播)' }
 ];
 
 let db: Database;
@@ -84,10 +86,10 @@ async function sendSummaryEmail(to: string[], subject: string, body: string) {
 }
 
 // Helper to fetch latest video
-function fetchLatestVideo(channelId: string): Promise<any> {
+function fetchLatestVideo(channelHandle: string, type: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    const tabName = channelId === '@yutinghaofinance' ? 'streams' : 'videos';
-    https.get(`https://www.youtube.com/${channelId}/${tabName}`, (ytRes) => {
+    const tabName = type === 'streams' ? 'streams' : 'videos';
+    https.get(`https://www.youtube.com/${channelHandle}/${tabName}`, (ytRes) => {
       let data = '';
       ytRes.on('data', (chunk) => data += chunk);
       ytRes.on('end', () => {
@@ -123,9 +125,9 @@ function fetchLatestVideo(channelId: string): Promise<any> {
 }
 
 // Logic to process a single channel
-async function processChannel(channel: { id: string, name: string }) {
+async function processChannel(channel: { id: string, handle: string, type: string, name: string }) {
   try {
-    const latestVideo = await fetchLatestVideo(channel.id);
+    const latestVideo = await fetchLatestVideo(channel.handle, channel.type);
     if (!latestVideo) {
       console.log(`Could not fetch latest video for ${channel.name}.`);
       return;
@@ -186,18 +188,27 @@ function setupCronJob() {
   // For Gooaye: Run every day at 21:00 (9 PM)
   cron.schedule("0 21 * * *", async () => {
     console.log("Running daily video check for Gooaye...");
-    const channel = CHANNELS.find(c => c.id === '@Gooaye');
+    const channel = CHANNELS.find(c => c.id === 'gooaye_videos');
     if (channel) await processChannel(channel);
   }, { timezone: "Asia/Taipei" });
 
   // For Yutinghao: Run every day at 08:30 AM
   cron.schedule("30 8 * * *", async () => {
     console.log("Running daily video check for Yutinghao...");
-    const channel = CHANNELS.find(c => c.id === '@yutinghaofinance');
+    const channel = CHANNELS.find(c => c.id === 'yutinghao_streams');
     if (channel) await processChannel(channel);
   }, { timezone: "Asia/Taipei" });
 
-  console.log("Internal cron jobs scheduled for 21:00 and 08:30 Asia/Taipei");
+  // For Guo Zhe-Rong: Run every day at 18:00
+  cron.schedule("0 18 * * *", async () => {
+    console.log("Running daily video check for Guo Zhe-Rong...");
+    const channelV = CHANNELS.find(c => c.id === 's178_videos');
+    if (channelV) await processChannel(channelV);
+    const channelS = CHANNELS.find(c => c.id === 's178_streams');
+    if (channelS) await processChannel(channelS);
+  }, { timezone: "Asia/Taipei" });
+
+  console.log("Internal cron jobs scheduled for 21:00, 08:30, and 18:00 Asia/Taipei");
 }
 
 async function startServer() {
@@ -213,7 +224,7 @@ async function startServer() {
       return next();
     }
     return basicAuth({
-      users: { 'home30': '0355553095' },
+      users: { 'home30': '035553095' },
       challenge: true,
       realm: 'Finance AI Secretary',
     })(req, res, next);
@@ -249,9 +260,10 @@ async function startServer() {
 
   // API Route: Fetch Recent Videos
   app.get("/api/recent-videos", (req, res) => {
-    const channelId = req.query.channel || '@Gooaye';
-    const tabName = channelId === '@yutinghaofinance' ? 'streams' : 'videos';
-    https.get(`https://www.youtube.com/${channelId}/${tabName}`, (ytRes) => {
+    const channelHandle = req.query.channel || '@Gooaye';
+    const type = req.query.type || 'videos';
+    const tabName = type === 'streams' ? 'streams' : 'videos';
+    https.get(`https://www.youtube.com/${channelHandle}/${tabName}`, (ytRes) => {
       let data = '';
       ytRes.on('data', (chunk) => {
         data += chunk;

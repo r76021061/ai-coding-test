@@ -14,33 +14,45 @@
 
 @layer components {
   .card {
-    @apply bg-white rounded-2xl shadow-sm border border-black/5 overflow-hidden;
+    @apply bg-white rounded-3xl shadow-sm border border-black/5 overflow-hidden;
   }
   
   .btn-primary {
-    @apply bg-slate-900 text-white px-6 py-3 rounded-xl font-medium hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100;
+    @apply bg-slate-900 text-white px-8 py-6 rounded-3xl font-bold text-2xl hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100;
   }
 
   .markdown-body {
     @apply prose prose-slate max-w-none;
-    @apply text-slate-700 leading-relaxed;
+    @apply text-slate-800 leading-[2.2] text-[26px] font-medium;
   }
   
   .markdown-body h1, .markdown-body h2, .markdown-body h3 {
-    @apply text-slate-900 font-semibold mt-6 mb-4;
+    @apply text-slate-900 font-bold mt-10 mb-6 text-[32px] leading-tight;
   }
   
   .markdown-body ul {
-    @apply list-disc pl-5 space-y-2;
+    @apply list-disc pl-10 space-y-5;
   }
   
   .markdown-body li {
-    @apply pl-1;
+    @apply pl-2;
+  }
+
+  .markdown-body p {
+    @apply mb-6;
   }
   
   .markdown-body strong {
-    @apply text-slate-900 font-semibold;
+    @apply text-slate-900 font-bold bg-yellow-100 px-2 py-1 rounded-lg;
   }
 }
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@layer utilities {
+  @supports (padding-bottom: env(safe-area-inset-bottom)) {
+    .pb-safe {
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+  }
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
