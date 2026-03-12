@@ -238,7 +238,8 @@ async function startServer() {
     const channelHandle = req.query.channel || '@Gooaye';
     const type = req.query.type || 'videos';
     const tabName = type === 'streams' ? 'streams' : 'videos';
-    https.get(`https://www.youtube.com/${channelHandle}/${tabName}`, (ytRes) => {
+    
+    const request = https.get(`https://www.youtube.com/${channelHandle}/${tabName}`, (ytRes) => {
       let data = '';
       ytRes.on('data', (chunk) => {
         data += chunk;
@@ -274,6 +275,13 @@ async function startServer() {
       console.error("Failed to fetch youtube", e);
       res.status(500).json({ error: "Failed to fetch youtube" });
     });
+    
+    // Add a 10-second timeout to the request
+    request.setTimeout(10000, () => {
+      request.destroy();
+      console.error("YouTube fetch timeout");
+      res.status(504).json({ error: "YouTube fetch timeout" });
+    });
   });
   
   // API Route: Get Cached Summary
@@ -288,7 +296,14 @@ async function startServer() {
     try {
       const docId = encodeURIComponent(url);
       const docRef = doc(db, "video_summaries", docId);
-      const docSnap = await getDoc(docRef);
+      
+      const getDocPromise = getDoc(docRef);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Database fetch timeout")), 5000)
+      );
+      
+      const docSnap = await Promise.race([getDocPromise, timeoutPromise]) as any;
+      
       if (docSnap.exists()) {
         res.json({ summary: docSnap.data().summary });
       } else {
@@ -312,11 +327,19 @@ async function startServer() {
     try {
       const docId = encodeURIComponent(url);
       const docRef = doc(db, "video_summaries", docId);
-      await setDoc(docRef, {
+      
+      const setDocPromise = setDoc(docRef, {
         video_url: url,
         summary: summary,
         created_at: new Date().toISOString()
       });
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Database write timeout")), 5000)
+      );
+      
+      await Promise.race([setDocPromise, timeoutPromise]);
+      
       res.json({ success: true });
     } catch (error) {
       console.error("Error saving summary to DB:", error);
@@ -343,13 +366,32 @@ async function startServer() {
     }
 
     try {
-      const transcriptItems = await YoutubeTranscript.fetchTranscript(videoUrl, { lang: 'zh-TW' })
+      // Add a 10-second timeout to prevent hanging
+      const fetchPromise = YoutubeTranscript.fetchTranscript(videoUrl, { lang: 'zh-TW' })
         .catch(() => YoutubeTranscript.fetchTranscript(videoUrl));
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Transcript fetch timeout")), 10000)
+      );
+
+      const transcriptItems = await Promise.race([fetchPromise, timeoutPromise]) as any[];
       const fullText = transcriptItems.map(item => item.text).join(' ');
       res.json({ text: fullText });
     } catch (error: any) {
+      const errorMessage = error.message || String(error);
+      const isExpectedError = 
+        errorMessage.includes('Transcript is disabled') || 
+        errorMessage.includes('No transcripts') ||
+        errorMessage.includes('Video is unavailable') ||
+        errorMessage.includes('Could not find transcripts');
+        
+      if (isExpectedError) {
+        console.warn(`[Info] Transcript is not available for video: ${videoUrl}. Falling back to search. Reason: ${errorMessage}`);
+        return res.status(404).json({ error: "Transcript not available", details: errorMessage });
+      }
+      
       console.error("Error fetching transcript:", error);
-      res.status(500).json({ error: "Failed to fetch transcript.", details: error.message || String(error) });
+      res.status(500).json({ error: "Failed to fetch transcript.", details: errorMessage });
     }
   });
 

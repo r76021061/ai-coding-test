@@ -23,7 +23,8 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: gooaye-summary
-        image: r76021061/gooaye-summary:v3.0.1 # 請替換成您的 Docker Image 名稱與版號
+        image: r76021061/gooaye-summary:v3.0.3 # 請替換成您的 Docker Image 名稱與版號
+        imagePullPolicy: Always
         resources:
           requests:
             cpu: "100m"

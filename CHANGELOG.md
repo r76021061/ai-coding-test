@@ -2,6 +2,27 @@
 
 這裡記錄了本系統所有的版本更新與功能變更。
 
+## [Release 3.1.0] - 2026-03-12
+
+### 🚀 系統與部署優化 (System & Deployment)
+- **嚴格財經資訊準確性**：移除無字幕影片的 Google Search 備用方案。為確保財經資訊的 100% 準確性，系統現在嚴格限制 AI 僅能基於真實影片逐字稿進行總結，避免 AI 產生幻覺或拼湊網路資訊。
+- **優雅降級錯誤處理**：優化後端字幕抓取錯誤處理，當影片未提供字幕或作者關閉字幕功能時，不再觸發 500 系統錯誤，而是改為優雅降級處理，並在畫面上明確告知使用者無法進行 AI 分析。
+
+### 🐛 問題修正 (Bug Fixes)
+- **首頁導覽修復**：修復了在摘要頁面點擊下方「首頁」標籤或上方 Logo 時，畫面不會正確返回影片列表（需重新整理）的問題。現在點擊後會自動清除摘要狀態並順暢返回首頁。
+
+## [Release 3.0.3] - 2026-03-12
+
+### 🚀 系統與部署優化 (System & Deployment)
+- **修復分析無限轉圈問題**：為所有外部 API 請求（包含 YouTube 逐字稿抓取、Firebase 資料庫讀寫、YouTube 頻道最新影片抓取）加入了嚴格的 **10 秒 Timeout 機制**。解決了當外部服務（如 YouTube 或 Firebase）無回應時，前端畫面會無限轉圈 (Spinning) 且不會報錯的問題。現在如果抓不到逐字稿，系統會自動在 10 秒後切換為 Google Search 模式進行分析。
+- **清除快取說明**：確認系統中已無寫死的舊信箱 (`rose.huang@gmail.com`)，該信箱僅存在於使用者的瀏覽器 `localStorage` 中。
+
+## [Release 3.0.2] - 2026-03-12
+
+### 🚀 系統與部署優化 (System & Deployment)
+- **強制拉取最新映像檔 (Image Pull Policy)**：在 `gke/deployment.yaml` 中明確加入 `imagePullPolicy: Always`。即使 Docker Hub CDN 快取了標籤，Kubernetes 每次啟動 Pod 時都會強制向遠端檢查並拉取最新的 Image，徹底解決雲端更新被擋住的問題。
+- **重啟指令更新**：在 `README.md` 中補充了 `kubectl rollout restart` 指令，方便在不改版號的情況下強制重新拉取映像檔。
+
 ## [Release 3.0.1] - 2026-03-12
 
 ### 🚀 系統與部署優化 (System & Deployment)

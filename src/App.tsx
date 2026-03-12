@@ -45,7 +45,7 @@ const CHANNELS = [
   { id: 's178_streams', handle: '@s178', type: 'streams', shortName: '郭哲榮 (直播)', name: '郭哲榮分析師-摩爾證券投顧 (直播)' }
 ];
 
-const APP_VERSION = 'Release 3.0.1';
+const APP_VERSION = 'Release 3.1.0';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -296,12 +296,19 @@ export default function App() {
       {/* App Header (Sticky) */}
       <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b-2 border-slate-200 shadow-sm">
         <div className="max-w-3xl mx-auto px-4 h-20 flex items-center justify-between relative">
-          <div className="flex items-center gap-4">
+          <button 
+            onClick={() => {
+              setActiveTab('home');
+              setSummary(null);
+              setError(null);
+            }}
+            className="flex items-center gap-4 active:scale-95 transition-transform text-left"
+          >
             <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-md">
               <TrendingUp className="w-8 h-8 text-white" />
             </div>
             <h1 className="font-extrabold text-3xl tracking-tight text-slate-900">財經 AI 秘書</h1>
-          </div>
+          </button>
           <div className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded-md hidden sm:block">
             {APP_VERSION.replace('Release ', 'v')}
           </div>
@@ -604,7 +611,11 @@ export default function App() {
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-4 border-slate-200 pb-safe z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
         <div className="max-w-md mx-auto flex h-20">
           <button 
-            onClick={() => setActiveTab('home')}
+            onClick={() => {
+              setActiveTab('home');
+              setSummary(null);
+              setError(null);
+            }}
             className={cn(
               "flex-1 flex flex-col items-center justify-center gap-3 transition-colors",
               activeTab === 'home' ? "text-slate-900" : "text-slate-400 active:bg-slate-50"
