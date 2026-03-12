@@ -6,6 +6,20 @@ export const summarizeVideo = async (channelName: string, videoUrl: string, vide
   }
 
   try {
+    // 0. Check cache first
+    try {
+      const cacheRes = await fetch(`/api/summary?url=${encodeURIComponent(videoUrl)}`);
+      if (cacheRes.ok) {
+        const cacheData = await cacheRes.json();
+        if (cacheData.summary) {
+          console.log("Returning cached summary for:", videoUrl);
+          return { text: cacheData.summary, sources: [] };
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to check cache", e);
+    }
+
     // 1. Try to fetch transcript from backend
     let fullText = "";
     try {
@@ -74,13 +88,28 @@ ${fullText.substring(0, 30000)}`;
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3-flash-preview",
       contents: prompt,
       ...(Object.keys(config).length > 0 && { config })
     });
 
+    const summaryText = response.text || "無法生成摘要";
+
+    // Save to cache
+    if (summaryText !== "無法生成摘要") {
+      try {
+        await fetch('/api/summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: videoUrl, summary: summaryText })
+        });
+      } catch (e) {
+        console.warn("Failed to save summary to cache", e);
+      }
+    }
+
     return {
-      text: response.text || "無法生成摘要",
+      text: summaryText,
       sources: []
     };
   } catch (error: any) {

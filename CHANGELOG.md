@@ -2,6 +2,16 @@
 
 這裡記錄了本系統所有的版本更新與功能變更。
 
+## [Release 2.3.c4d5e6f] - 2026-03-12
+
+### 🚀 系統與排程優化 (System & CronJob)
+- **AI 模型降級降本**：將分析模型從昂貴的 `gemini-3.1-pro-preview` 降級為 `gemini-3-flash-preview`，大幅降低 API 呼叫成本。
+- **GKE CronJob 修復與補齊**：修正了 `gke/cronjob.yaml` 中呼叫 API 的 `channelId` 參數（改為對應新的 `gooaye_videos` 等 ID），並補上了郭哲榮分析師每天 18:00 的影片與直播排程設定。
+- **內部定時任務恢復**：確認並恢復了 `server.ts` 中每 30 分鐘執行一次的內部檢查機制，確保 SQLite 正常記錄最新影片狀態，防止重複發送通知。
+
+### 💅 設定調整 (Changed)
+- **通知信箱更新**：從 `server.ts`、`.env.example` 及 `gke/configmap.yaml` 中移除了 `rose.huang@gmail.com`，目前系統僅會發送通知至主要信箱。
+
 ## [Release 2.2.b7c8d9e] - 2026-03-11
 
 ### 🚀 新增功能 (Added)

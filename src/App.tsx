@@ -45,7 +45,7 @@ const CHANNELS = [
   { id: 's178_streams', handle: '@s178', type: 'streams', shortName: '郭哲榮 (直播)', name: '郭哲榮分析師-摩爾證券投顧 (直播)' }
 ];
 
-const APP_VERSION = 'Release 2.2.b7c8d9e';
+const APP_VERSION = 'Release 2.3.c4d5e6f';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -72,7 +72,7 @@ export default function App() {
   const [emails, setEmails] = useState<string[]>(() => {
     const saved = localStorage.getItem('gooaye_emails');
     if (saved) return JSON.parse(saved);
-    return ['r76021061@gmail.com', 'rose.huang@gmail.com'];
+    return ['r76021061@gmail.com'];
   });
   const [newEmail, setNewEmail] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
@@ -415,6 +415,14 @@ export default function App() {
                   animate={{ opacity: 1, y: 0 }}
                   className="space-y-10"
                 >
+                  {/* Big Send Action */}
+                  <button
+                    onClick={() => setShowEmailModal(true)}
+                    className="w-full bg-blue-600 text-white py-10 rounded-[3rem] font-extrabold text-4xl shadow-2xl shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-4"
+                  >
+                    <Mail className="w-12 h-12" /> 傳給家人
+                  </button>
+
                   <div className="bg-white rounded-[3rem] shadow-sm border-2 border-slate-200 overflow-hidden">
                     <div className="bg-slate-900 p-8 text-white flex items-center justify-between">
                       <h3 className="text-3xl font-extrabold flex items-center gap-4">
@@ -433,14 +441,6 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-
-                  {/* Big Send Action */}
-                  <button
-                    onClick={() => setShowEmailModal(true)}
-                    className="w-full bg-blue-600 text-white py-10 rounded-[3rem] font-extrabold text-4xl shadow-2xl shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-4"
-                  >
-                    <Mail className="w-12 h-12" /> 傳給家人
-                  </button>
 
                   {/* Source Links */}
                   {sources.length > 0 && (

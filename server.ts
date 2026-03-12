@@ -36,7 +36,12 @@ async function initDB() {
       video_id TEXT,
       processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (channel_id, video_id)
-    )
+    );
+    CREATE TABLE IF NOT EXISTS video_summaries (
+      video_url TEXT PRIMARY KEY,
+      summary TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
   console.log(`Database initialized at ${dbPath}`);
 }
@@ -146,7 +151,7 @@ async function processChannel(channel: { id: string, handle: string, type: strin
     console.log(`New video found for ${channel.name}:`, latestVideo.title);
 
     // 3. Send Email (Notification only, since Gemini API cannot be called from backend)
-    const emailsStr = process.env.CRON_EMAILS || "r76021061@gmail.com,rose.huang@gmail.com";
+    const emailsStr = process.env.CRON_EMAILS || "r76021061@gmail.com";
     const emails = emailsStr.split(",").map(e => e.trim());
     
     const body = `
@@ -183,31 +188,17 @@ async function processChannel(channel: { id: string, handle: string, type: strin
 
 // Setup Cron Job
 function setupCronJob() {
-  // We can keep the internal cron jobs as a fallback or remove them if K8s is preferred.
-  // For Gooaye: Run every day at 21:00 (9 PM)
-  cron.schedule("0 21 * * *", async () => {
-    console.log("Running daily video check for Gooaye...");
-    const channel = CHANNELS.find(c => c.id === 'gooaye_videos');
-    if (channel) await processChannel(channel);
+  // Run every 30 minutes
+  cron.schedule("*/30 * * * *", async () => {
+    console.log("Running scheduled video check for all channels (every 30 mins)...");
+    for (const channel of CHANNELS) {
+      await processChannel(channel);
+      // Add a small delay (5 seconds) between requests to avoid hitting YouTube too fast
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }, { timezone: "Asia/Taipei" });
 
-  // For Yutinghao: Run every day at 08:30 AM
-  cron.schedule("30 8 * * *", async () => {
-    console.log("Running daily video check for Yutinghao...");
-    const channel = CHANNELS.find(c => c.id === 'yutinghao_streams');
-    if (channel) await processChannel(channel);
-  }, { timezone: "Asia/Taipei" });
-
-  // For Guo Zhe-Rong: Run every day at 18:00
-  cron.schedule("0 18 * * *", async () => {
-    console.log("Running daily video check for Guo Zhe-Rong...");
-    const channelV = CHANNELS.find(c => c.id === 's178_videos');
-    if (channelV) await processChannel(channelV);
-    const channelS = CHANNELS.find(c => c.id === 's178_streams');
-    if (channelS) await processChannel(channelS);
-  }, { timezone: "Asia/Taipei" });
-
-  console.log("Internal cron jobs scheduled for 21:00, 08:30, and 18:00 Asia/Taipei");
+  console.log("Internal cron job scheduled to run every 30 minutes.");
 }
 
 async function startServer() {
@@ -287,6 +278,43 @@ async function startServer() {
     });
   });
   
+  // API Route: Get Cached Summary
+  app.get("/api/summary", async (req, res) => {
+    const url = req.query.url as string;
+    if (!url) {
+      return res.status(400).json({ error: "Missing url parameter" });
+    }
+    try {
+      const row = await db.get("SELECT summary FROM video_summaries WHERE video_url = ?", [url]);
+      if (row) {
+        res.json({ summary: row.summary });
+      } else {
+        res.status(404).json({ error: "Summary not found" });
+      }
+    } catch (error) {
+      console.error("Error fetching summary from DB:", error);
+      res.status(500).json({ error: "Database error" });
+    }
+  });
+
+  // API Route: Save Summary to Cache
+  app.post("/api/summary", async (req, res) => {
+    const { url, summary } = req.body;
+    if (!url || !summary) {
+      return res.status(400).json({ error: "Missing url or summary" });
+    }
+    try {
+      await db.run(
+        "INSERT OR REPLACE INTO video_summaries (video_url, summary) VALUES (?, ?)",
+        [url, summary]
+      );
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error saving summary to DB:", error);
+      res.status(500).json({ error: "Database error" });
+    }
+  });
+
   // API Route: Check Email Config Status
   app.get("/api/email-status", (req, res) => {
     const required = ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"];

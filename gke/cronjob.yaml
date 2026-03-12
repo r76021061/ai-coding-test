@@ -24,7 +24,7 @@ spec:
             command:
             - /bin/sh
             - -c
-            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"@Gooaye\"}'"
+            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"gooaye_videos\"}'"
           restartPolicy: OnFailure
 
 ---
@@ -54,5 +54,65 @@ spec:
             command:
             - /bin/sh
             - -c
-            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"@yutinghaofinance\"}'"
+            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"yutinghao_streams\"}'"
+          restartPolicy: OnFailure
+
+---
+# 郭哲榮分析師 的 CronJob (影片)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s178-videos-summary-cron
+spec:
+  schedule: "0 18 * * *" # 每天傍晚 18:00
+  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            cloud.google.com/gke-spot: "true"
+          tolerations:
+          - key: "cloud.google.com/gke-spot"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          containers:
+          - name: trigger-cron
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"s178_videos\"}'"
+          restartPolicy: OnFailure
+
+---
+# 郭哲榮分析師 的 CronJob (直播)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s178-streams-summary-cron
+spec:
+  schedule: "0 18 * * *" # 每天傍晚 18:00
+  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            cloud.google.com/gke-spot: "true"
+          tolerations:
+          - key: "cloud.google.com/gke-spot"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          containers:
+          - name: trigger-cron
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"s178_streams\"}'"
           restartPolicy: OnFailure
