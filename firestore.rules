@@ -55,17 +55,17 @@ service cloud.firestore {
     }
 
     match /processed_videos/{videoId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidProcessedVideo(request.resource.data);
-      allow update: if isAuthenticated() && isValidProcessedVideo(request.resource.data);
-      allow delete: if isAuthenticated();
+      allow read: if true;
+      allow create: if isValidProcessedVideo(request.resource.data);
+      allow update: if isValidProcessedVideo(request.resource.data);
+      allow delete: if false;
     }
 
     match /video_summaries/{summaryId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidVideoSummary(request.resource.data);
-      allow update: if isAuthenticated() && isValidVideoSummary(request.resource.data);
-      allow delete: if isAuthenticated();
+      allow read: if true;
+      allow create: if isValidVideoSummary(request.resource.data);
+      allow update: if isValidVideoSummary(request.resource.data);
+      allow delete: if false;
     }
   }
 }

@@ -9,7 +9,6 @@ import { YoutubeTranscript } from "youtube-transcript";
 import fs from "fs";
 import path from "path";
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 
 dotenv.config();
@@ -23,7 +22,6 @@ const CHANNELS = [
 ];
 
 let db: any;
-let auth: any;
 
 async function initDB() {
   try {
@@ -32,10 +30,7 @@ async function initDB() {
       const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       const firebaseApp = initializeApp(firebaseConfig);
       db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
-      auth = getAuth(firebaseApp);
-      
-      await signInAnonymously(auth);
-      console.log("Firebase initialized and authenticated anonymously.");
+      console.log("Firebase initialized.");
     } else {
       console.warn("firebase-applet-config.json not found. Firebase will not be initialized.");
     }
