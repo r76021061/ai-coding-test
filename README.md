@@ -33,10 +33,15 @@
 請**務必在 apply 其他 yaml 檔案之前**，先在您的 K8s 叢集中執行以下指令建立 Secret：
 
 ```bash
+# 建立環境變數 Secret
 kubectl create secret generic gooaye-secrets \
   --from-literal=GEMINI_API_KEY="您的_GEMINI_API_KEY" \
   --from-literal=SMTP_USER="您的_GMAIL_帳號" \
   --from-literal=SMTP_PASS="您的_GMAIL_應用程式密碼"
+
+# 建立 Firebase 設定檔 Secret (從檔案掛載)
+kubectl create secret generic firebase-config-secret \
+  --from-file=firebase-applet-config.json=./firebase-applet-config.json
 ```
 
 ### 2. 套用 Kubernetes 設定檔

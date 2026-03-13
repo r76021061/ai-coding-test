@@ -36,7 +36,6 @@ COPY --from=builder /app/dist ./dist
 # 複製 server.ts 和其他必要檔案
 COPY server.ts ./
 COPY tsconfig.json ./
-COPY firebase-applet-config.json* ./
 
 # 暴露 3000 埠
 EXPOSE 3000

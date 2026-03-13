@@ -2,6 +2,11 @@
 
 這裡記錄了本系統所有的版本更新與功能變更。
 
+## [Release 3.2.2] - 2026-03-12
+
+### 🛡️ 資安架構升級 (Security Upgrade)
+- **Firebase 憑證安全掛載**：移除 `Dockerfile` 中將 `firebase-applet-config.json` 寫死打包進 Image 的不安全做法。改用 Kubernetes 企業級標準的 **Secret Volume Mount** 機制。現在 Firebase 設定檔會作為 K8s Secret 獨立管理，並在 Pod 啟動時動態掛載至 `/app/firebase-applet-config.json`。這確保了即使 Docker Hub 映像檔外流，也不會洩漏任何資料庫存取憑證。
+
 ## [Release 3.2.1] - 2026-03-12
 
 ### 🐛 問題修正 (Bug Fixes)

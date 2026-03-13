@@ -42,7 +42,14 @@ spec:
         volumeMounts:
         - name: data-volume
           mountPath: /app/data
+        - name: firebase-config-volume
+          mountPath: /app/firebase-applet-config.json
+          subPath: firebase-applet-config.json
+          readOnly: true
       volumes:
       - name: data-volume
         persistentVolumeClaim:
           claimName: gooaye-summary-pvc
+      - name: firebase-config-volume
+        secret:
+          secretName: firebase-config-secret
