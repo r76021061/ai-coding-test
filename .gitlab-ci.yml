@@ -1,0 +1,56 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  # 使用 Git Commit 的前 8 碼作為 Docker Image 的版號
+  VERSION: $CI_COMMIT_SHORT_SHA
+  IMAGE_NAME: r76021061/gooaye-summary
+
+# ==========================================
+# Stage 1: 打包並推送到 Docker Hub
+# ==========================================
+build_image:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  before_script:
+    # 登入 Docker Hub (請在 GitLab CI/CD Variables 設定 DOCKER_USER 與 DOCKER_PASSWORD)
+    - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USER" --password-stdin
+  script:
+    - echo "Building image $IMAGE_NAME:$VERSION ..."
+    - docker build -t $IMAGE_NAME:$VERSION .
+    - docker push $IMAGE_NAME:$VERSION
+    # 選擇性：同時推一個 latest 標籤方便本地測試拉取
+    - docker tag $IMAGE_NAME:$VERSION $IMAGE_NAME:latest
+    - docker push $IMAGE_NAME:latest
+  only:
+    - main # 只在推送到 main 分支時觸發
+
+# ==========================================
+# Stage 2: 部署到 GKE
+# ==========================================
+deploy_gke:
+  stage: deploy
+  image: google/cloud-sdk:alpine
+  needs:
+    - build_image # 確保 build 成功後才執行 deploy
+  before_script:
+    # 1. 驗證 GCP 服務帳號 (請在 GitLab CI/CD Variables 設定 GCP_SERVICE_ACCOUNT_KEY，內容為 JSON)
+    - echo "$GCP_SERVICE_ACCOUNT_KEY" > gcp-key.json
+    - gcloud auth activate-service-account --key-file=gcp-key.json
+    - gcloud config set project $GCP_PROJECT_ID
+    - gcloud config set compute/zone $GCP_ZONE
+    
+    # 2. 取得 GKE 叢集憑證 (請在 GitLab CI/CD Variables 設定 GKE_CLUSTER_NAME)
+    - gcloud container clusters get-credentials $GKE_CLUSTER_NAME
+  script:
+    - echo "Deploying version $VERSION to GKE..."
+    # 使用 sed 動態替換版號，並直接套用 deployment
+    - sed "s/VERSION_PLACEHOLDER/$VERSION/g" ./gke/deployment.yaml | kubectl apply -f -
+    
+    # (選擇性) 確認部署狀態
+    - kubectl rollout status deployment/gooaye-summary-app
+  only:
+    - main # 只在推送到 main 分支時觸發

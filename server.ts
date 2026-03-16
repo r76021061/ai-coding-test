@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -121,6 +122,78 @@ function fetchLatestVideo(channelHandle: string, type: string): Promise<any> {
   });
 }
 
+// Backend summary generator
+async function generateSummaryBackend(channelName: string, videoUrl: string, videoTitle: string) {
+  let fullText = "";
+  try {
+    const fetchPromise = YoutubeTranscript.fetchTranscript(videoUrl, { lang: 'zh-TW' })
+      .catch(() => YoutubeTranscript.fetchTranscript(videoUrl, { lang: 'zh-Hant' }))
+      .catch(() => YoutubeTranscript.fetchTranscript(videoUrl, { lang: 'zh' }))
+      .catch(() => YoutubeTranscript.fetchTranscript(videoUrl));
+    
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Transcript fetch timeout")), 10000)
+    );
+
+    const transcriptItems = await Promise.race([fetchPromise, timeoutPromise]) as any[];
+    fullText = transcriptItems.map(item => item.text).join(' ');
+  } catch (e) {
+    console.warn("Transcript not available for backend summary:", e);
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY not found");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  let prompt = "";
+  let config: any = {};
+  let isFallback = false;
+
+  if (fullText && fullText.trim() !== "") {
+    prompt = `你是一個專業的財經分析師。請幫我總結以下 ${channelName || '財經'} 的 YouTube 影片逐字稿。
+請用繁體中文，詳細整理出以下重點：
+1. 本集核心主題
+2. 市場趨勢與總經分析
+3. 提到的個股或產業重點
+4. 講者的個人觀點與結論
+
+逐字稿內容：
+${fullText.substring(0, 30000)}`;
+  } else {
+    isFallback = true;
+    const searchTarget = videoTitle ? `${channelName} ${videoTitle}` : `${channelName} ${videoUrl}`;
+    prompt = `你是一個專業的財經分析師。請幫我總結以下 ${channelName || '財經'} 的 YouTube 影片內容：
+影片標題：${searchTarget}
+影片連結：${videoUrl}
+
+請用繁體中文，詳細整理出以下重點：
+1. 本集核心主題
+2. 市場趨勢與總經分析
+3. 提到的個股或產業重點
+4. 講者的個人觀點與結論`;
+    
+    config = {
+      tools: [{ googleSearch: {} }, { urlContext: {} }]
+    };
+  }
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt,
+    ...(Object.keys(config).length > 0 && { config })
+  });
+
+  let summaryText = response.text || "無法生成摘要";
+  
+  if (isFallback && summaryText !== "無法生成摘要") {
+    summaryText = `> ⚠️ **系統提示：以下內容為GEMINI透過解析 YouTube (urlContext) 與(googleSearch)生成僅供參考**\n\n---\n\n` + summaryText;
+  }
+
+  return summaryText;
+}
+
 // Logic to process a single channel
 async function processChannel(channel: { id: string, handle: string, type: string, name: string }) {
   try {
@@ -147,7 +220,27 @@ async function processChannel(channel: { id: string, handle: string, type: strin
 
     console.log(`New video found for ${channel.name}:`, latestVideo.title);
 
-    // 3. Send Email (Notification only, since Gemini API cannot be called from backend)
+    // 3. Generate Summary
+    let summaryText = "";
+    try {
+      console.log(`Generating summary for ${latestVideo.title}...`);
+      summaryText = await generateSummaryBackend(channel.name, latestVideo.url, latestVideo.title);
+      
+      // Save summary to DB
+      const summaryDocId = encodeURIComponent(latestVideo.url);
+      const summaryDocRef = doc(db, "video_summaries", summaryDocId);
+      await setDoc(summaryDocRef, {
+        video_url: latestVideo.url,
+        summary: summaryText,
+        created_at: new Date().toISOString()
+      });
+      console.log(`Summary saved to DB for ${latestVideo.title}`);
+    } catch (e) {
+      console.error("Failed to generate summary in backend:", e);
+      summaryText = "無法自動生成摘要，請前往網站手動生成。";
+    }
+
+    // 4. Send Email
     const emailsStr = process.env.CRON_EMAILS || "r76021061@gmail.com";
     const emails = emailsStr.split(",").map(e => e.trim());
     
@@ -158,11 +251,15 @@ async function processChannel(channel: { id: string, handle: string, type: strin
 
 ### [${latestVideo.title}](${latestVideo.url})
 
-> 💡 **溫馨提示：** 
-> 由於平台安全性限制，AI 摘要功能必須在您的瀏覽器中執行。
-> 請點擊下方連結前往「財經 AI 秘書 2.0」網站，系統將自動為您生成這集影片的重點摘要！
+---
 
-[👉 前往網站生成 AI 摘要](https://ais-pre-gbf6utyng3ppivgpw645hj-192441689969.asia-northeast1.run.app)
+## 🤖 AI 重點摘要
+
+${summaryText}
+
+---
+
+[👉 前往網站查看更多資訊](https://ais-pre-gbf6utyng3ppivgpw645hj-192441689969.asia-northeast1.run.app)
     `;
 
     await sendSummaryEmail(
@@ -171,7 +268,7 @@ async function processChannel(channel: { id: string, handle: string, type: strin
       body
     );
 
-    // 4. Save state to DB
+    // 5. Save state to DB
     await setDoc(docRef, {
       channel_id: channel.id,
       video_id: latestVideo.videoId,

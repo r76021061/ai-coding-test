@@ -77,8 +77,8 @@ kubectl get svc gooaye-summary-service -w
 
 ### 1. 在本機打包並上傳 Image (標記明確版號)
 ```bash
-# 設定本次上版的版本號 (例如 v3.2.2)
-export VERSION=v3.2.2
+# 設定本次上版的版本號 (例如 v3.3.0)
+export VERSION=v3.3.0
 
 # 建立 Docker Image (請將 r76021061 替換為您的 Docker Hub 帳號)
 docker build -t r76021061/gooaye-summary:$VERSION .
