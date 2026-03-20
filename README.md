@@ -77,8 +77,8 @@ kubectl get svc gooaye-summary-service -w
 
 ### 1. 在本機打包並上傳 Image (標記明確版號)
 ```bash
-# 設定本次上版的版本號 (例如 v3.3.1)
-export VERSION=v3.3.1
+# 設定本次上版的版本號 (例如 v3.3.3)
+export VERSION=v3.3.3
 
 # 建立 Docker Image (請將 r76021061 替換為您的 Docker Hub 帳號)
 docker build -t r76021061/gooaye-summary:$VERSION .
@@ -139,7 +139,7 @@ kubectl rollout undo deployment/gooaye-summary-app
 在您的 Cloud Shell 中執行以下指令（請替換為您的環境變數）：
 ```bash
 gcloud run deploy gooaye-summary \
-  --image r76021061/gooaye-summary:v3.3.1 \
+  --image r76021061/gooaye-summary:v3.3.3 \
   --platform managed \
   --region asia-northeast1 \
   --allow-unauthenticated \

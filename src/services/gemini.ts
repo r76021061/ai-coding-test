@@ -1,134 +1,34 @@
-import { GoogleGenAI } from "@google/genai";
-
-export const summarizeVideo = async (channelName: string, videoUrl: string, videoTitle?: string) => {
+export const summarizeVideo = async (
+  channelName: string,
+  videoUrl: string,
+  videoTitle?: string,
+) => {
   if (!videoUrl) {
     return { text: "請提供影片連結。", sources: [] };
   }
 
   try {
-    // 0. Check cache first
-    try {
-      const cacheRes = await fetch(`/api/summary?url=${encodeURIComponent(videoUrl)}`);
-      if (cacheRes.ok) {
-        const cacheData = await cacheRes.json();
-        if (cacheData.summary) {
-          console.log("Returning cached summary for:", videoUrl);
-          return { text: cacheData.summary, sources: [] };
-        }
-      } else {
-        console.warn("Cache miss or error, status:", cacheRes.status);
-      }
-    } catch (e) {
-      console.warn("Failed to check cache", e);
-    }
+    const channelId =
+      channelName === "股癌"
+        ? "gooaye"
+        : channelName === "財經皓角"
+          ? "finance_hao"
+          : channelName === "郭哲榮分析師"
+            ? "kuo_che_jung"
+            : "unknown";
 
-    // 1. Try to fetch transcript from backend
-    let fullText = "";
-    try {
-      const transcriptRes = await fetch('/api/transcript', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoUrl }),
-      });
-      
-      if (transcriptRes.ok) {
-        const data = await transcriptRes.json();
-        fullText = data.text;
-      } else {
-        console.warn("Transcript not available, falling back to search.");
-      }
-    } catch (e: any) {
-      console.warn("Failed to fetch transcript, falling back to search:", e);
-    }
-
-    // 2. Initialize Gemini AI
-    let apiKey = process.env.GEMINI_API_KEY;
-    
-    // If running in Docker/K8s, the build-time env might be undefined, so we fetch it from the backend at runtime
-    if (!apiKey || apiKey === "undefined") {
-      try {
-        const configRes = await fetch('/api/config');
-        if (configRes.ok) {
-          const configData = await configRes.json();
-          apiKey = configData.geminiApiKey;
-        }
-      } catch (e) {
-        console.warn("Failed to fetch runtime config", e);
-      }
-    }
-
-    if (!apiKey || apiKey === "undefined") {
-      throw new Error("Gemini API Key is missing. Please check your environment variables or Kubernetes Secret.");
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-
-    let prompt = "";
-    let config: any = {};
-    let isFallback = false;
-
-    if (fullText && fullText.trim() !== "") {
-      prompt = `你是一個專業的財經分析師。請幫我總結以下 ${channelName || '財經'} 的 YouTube 影片逐字稿。
-請用繁體中文，詳細整理出以下重點：
-1. 本集核心主題
-2. 市場趨勢與總經分析
-3. 提到的個股或產業重點
-4. 講者的個人觀點與結論
-
-逐字稿內容：
-${fullText.substring(0, 30000)}`;
+    const cacheRes = await fetch(
+      `/api/summary?url=${encodeURIComponent(videoUrl)}&channelId=${channelId}&channelName=${encodeURIComponent(channelName)}`,
+    );
+    if (cacheRes.ok) {
+      const cacheData = await cacheRes.json();
+      return { text: cacheData.summary, sources: [] };
     } else {
-      isFallback = true;
-      const searchTarget = videoTitle ? `${channelName} ${videoTitle}` : `${channelName} ${videoUrl}`;
-      prompt = `你是一個專業的財經分析師。請幫我總結以下 ${channelName || '財經'} 的 YouTube 影片內容：
-影片標題：${searchTarget}
-影片連結：${videoUrl}
-
-請用繁體中文，詳細整理出以下重點：
-1. 本集核心主題
-2. 市場趨勢與總經分析
-3. 提到的個股或產業重點
-4. 講者的個人觀點與結論`;
-      
-      config = {
-        tools: [{ googleSearch: {} }, { urlContext: {} }]
-      };
+      console.warn("Cache miss or error, status:", cacheRes.status);
+      return { text: "無法取得資料，請稍後再試。", sources: [] };
     }
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      ...(Object.keys(config).length > 0 && { config })
-    });
-
-    let summaryText = response.text || "無法生成摘要";
-    
-    if (isFallback && summaryText !== "無法生成摘要") {
-      summaryText = `> ⚠️ **系統提示：以下內容為GEMINI透過解析 YouTube (urlContext) 與(googleSearch)生成僅供參考**\n\n---\n\n` + summaryText;
-    }
-
-    // Save to cache
-    if (summaryText !== "無法生成摘要") {
-      try {
-        const res = await fetch('/api/summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: videoUrl, summary: summaryText })
-        });
-        if (!res.ok) {
-          console.warn("Failed to save summary to cache, status:", res.status);
-        }
-      } catch (e) {
-        console.warn("Failed to save summary to cache", e);
-      }
-    }
-
-    return {
-      text: summaryText,
-      sources: []
-    };
   } catch (error: any) {
     console.error("Error calling summarize API:", error);
-    throw error;
+    return { text: "系統發生錯誤，請稍後再試。", sources: [] };
   }
 };
