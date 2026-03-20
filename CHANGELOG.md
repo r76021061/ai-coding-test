@@ -2,6 +2,14 @@
 
 這裡記錄了本系統所有的版本更新與功能變更。
 
+## [Release 3.3.1] - 2026-03-20
+
+### 🐛 問題修正 (Bug Fixes)
+- **修復 YouTube 爬蟲解析崩潰**：當頻道發布「Shorts 短影音」或「即將首播」時，因 YouTube 回傳資料格式改變，導致 `TypeError: Cannot read properties of undefined (reading 'title')` 的問題。已加入嚴格的型別安全判斷，自動過濾非正規影片。
+
+### 🛡️ 資安架構升級 (Security Upgrade)
+- **防禦惡意機器人掃描 (URIError 攔截)**：新增全域錯誤攔截器，防禦網路上惡意機器人盲目掃描漏洞（如 `/cgi-bin/%%32%65...`）導致 Express 框架解析報錯。現在遇到惡意請求會直接靜默丟棄並回傳 `400 Bad Request`，大幅減少 Cloud Logging 產生大量無效 Log 的監控費用。
+
 ## [Release 3.3.0] - 2026-03-16
 
 ### ✨ 新增功能 (Added)

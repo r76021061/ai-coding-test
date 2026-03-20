@@ -98,15 +98,15 @@ function fetchLatestVideo(channelHandle: string, type: string): Promise<any> {
             const tabs = json.contents.twoColumnBrowseResultsRenderer.tabs;
             const videosTab = tabs.find((t: any) => t.tabRenderer && t.tabRenderer.content && t.tabRenderer.content.richGridRenderer);
             const items = videosTab.tabRenderer.content.richGridRenderer.contents;
-            const latestItem = items.find((i: any) => i.richItemRenderer);
+            const latestItem = items.find((i: any) => i.richItemRenderer && i.richItemRenderer.content && i.richItemRenderer.content.videoRenderer);
             
             if (latestItem) {
               const v = latestItem.richItemRenderer.content.videoRenderer;
               resolve({
-                title: v.title.runs[0].text,
+                title: v.title?.runs?.[0]?.text || 'Unknown Title',
                 videoId: v.videoId,
                 url: 'https://www.youtube.com/watch?v=' + v.videoId,
-                date: v.publishedTimeText?.simpleText
+                date: v.publishedTimeText?.simpleText || ''
               });
             } else {
               resolve(null);
@@ -350,14 +350,16 @@ async function startServer() {
             const videosTab = tabs.find((t: any) => t.tabRenderer && t.tabRenderer.content && t.tabRenderer.content.richGridRenderer);
             const items = videosTab.tabRenderer.content.richGridRenderer.contents;
             
-            const videos = items.filter((i: any) => i.richItemRenderer).map((i: any) => {
-              const v = i.richItemRenderer.content.videoRenderer;
-              return {
-                title: v.title.runs[0].text,
-                url: 'https://www.youtube.com/watch?v=' + v.videoId,
-                date: v.publishedTimeText?.simpleText
-              };
-            });
+            const videos = items
+              .filter((i: any) => i.richItemRenderer && i.richItemRenderer.content && i.richItemRenderer.content.videoRenderer)
+              .map((i: any) => {
+                const v = i.richItemRenderer.content.videoRenderer;
+                return {
+                  title: v.title?.runs?.[0]?.text || 'Unknown Title',
+                  url: 'https://www.youtube.com/watch?v=' + v.videoId,
+                  date: v.publishedTimeText?.simpleText || ''
+                };
+              });
             
             res.json(videos);
           } else {
@@ -566,6 +568,15 @@ async function startServer() {
       res.sendFile(path.join(process.cwd(), "dist", "index.html"));
     });
   }
+
+  // Global error handler for URIError (malicious scans)
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err instanceof URIError) {
+      console.warn(`[Security] Caught URIError from ${req.ip}: ${req.originalUrl}`);
+      return res.status(400).send('Bad Request');
+    }
+    next(err);
+  });
 
   app.listen(PORT, "0.0.0.0", async () => {
     await initDB();

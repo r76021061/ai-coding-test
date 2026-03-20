@@ -77,8 +77,8 @@ kubectl get svc gooaye-summary-service -w
 
 ### 1. 在本機打包並上傳 Image (標記明確版號)
 ```bash
-# 設定本次上版的版本號 (例如 v3.3.0)
-export VERSION=v3.3.0
+# 設定本次上版的版本號 (例如 v3.3.1)
+export VERSION=v3.3.1
 
 # 建立 Docker Image (請將 r76021061 替換為您的 Docker Hub 帳號)
 docker build -t r76021061/gooaye-summary:$VERSION .
@@ -121,3 +121,41 @@ kubectl rollout undo deployment/gooaye-summary-app
 ```
 
 > **注意**：請記得將指令中的 `r76021061/gooaye-summary` 替換成您實際的 Docker Hub 帳號與 Image 名稱。
+
+---
+
+## 🌟 終極省錢大絕招：無痛轉移至 Cloud Run (強烈推薦)
+
+如果您發現 GKE 的 **Cloud Monitoring (監控)** 與 **Networking (網路)** 費用過高（例如每天高達 $10~$20 美金），這是因為 GKE 預設會開啟大量的系統監控日誌，且 Load Balancer 與 Cloud NAT 都有高額的固定月費。
+
+為了一個小型的定時摘要機器人，維護一整個 GKE 叢集成本太高。**強烈建議將服務轉移到 Google Cloud Run**，您可以獲得以下好處：
+1. **網路費幾乎 $0**：內建免費 HTTPS 網址與負載平衡，免收 Load Balancer 基本費與 Cloud NAT 費用。
+2. **監控費幾乎 $0**：沒有 K8s 底層繁雜的網路崩潰 Log。
+3. **運算費幾乎 $0 (Scale to Zero)**：沒人看網頁時，機器會自動縮減到 0 台，完全不收費。
+
+### 🚀 Cloud Run 部署步驟
+
+**步驟 1：部署 Image 到 Cloud Run**
+在您的 Cloud Shell 中執行以下指令（請替換為您的環境變數）：
+```bash
+gcloud run deploy gooaye-summary \
+  --image r76021061/gooaye-summary:v3.3.1 \
+  --platform managed \
+  --region asia-northeast1 \
+  --allow-unauthenticated \
+  --port 3000 \
+  --set-env-vars="GEMINI_API_KEY=您的API_KEY,SMTP_HOST=您的SMTP,SMTP_USER=您的信箱,SMTP_PASS=您的密碼,CRON_EMAILS=r76021061@gmail.com"
+```
+*(部署完成後，系統會提供一個 `https://gooaye-summary-xxx.run.app` 的免費網址)*
+
+**步驟 2：設定 Cloud Scheduler (取代 K8s CronJob)**
+因為 Cloud Run 沒人訪問時會休眠，我們需要使用 GCP 免費的 Cloud Scheduler 來定時觸發後端更新。
+1. 進入 GCP 控制台搜尋 **Cloud Scheduler**，建立一個任務。
+2. **頻率：** `*/30 * * * *` (每 30 分鐘)
+3. **目標類型：** HTTP
+4. **URL：** `https://您的Cloud-Run-網址/api/trigger-cron`
+5. **HTTP 方法：** POST
+6. **Body：** `{"channelId": "gooaye_videos"}` (為每個頻道建立一個 Scheduler 即可)
+
+**步驟 3：刪除 GKE 叢集**
+確認 Cloud Run 運作正常、信件也能收到後，您可以**把整個 GKE 叢集刪除**。刪除後，您的 Monitor 和 Network 費用將會瞬間掉到 $0 附近！

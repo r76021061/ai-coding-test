@@ -45,7 +45,7 @@ const CHANNELS = [
   { id: 's178_streams', handle: '@s178', type: 'streams', shortName: '郭哲榮 (直播)', name: '郭哲榮分析師-摩爾證券投顧 (直播)' }
 ];
 
-const APP_VERSION = 'Release 3.3.0';
+const APP_VERSION = 'Release 3.3.1';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
