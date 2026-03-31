@@ -32,15 +32,18 @@ ENV NODE_ENV=production
 # 複製 package.json 和 package-lock.json
 COPY package*.json ./
 
-# 僅安裝生產環境依賴 (如果您的 server.ts 依賴 tsx，可能需要保留 devDependencies 或全域安裝 tsx)
+# 安裝生產依賴，並全域安裝 tsx 執行 TypeScript
 RUN npm install --omit=dev && npm install -g tsx
 
-# 從 builder 階段複製編譯好的前端檔案
+# 從 builder 階段複製編譯好的前端靜態檔案
 COPY --from=builder /app/dist ./dist
 
-# 複製 server.ts 和其他必要檔案
+# 複製後端 TypeScript 原始碼
 COPY server.ts ./
 COPY tsconfig.json ./
+
+# ★ 複製所有 Service 模組 (v3.4.0 新增)
+COPY services/ ./services/
 
 # 暴露 3000 埠
 EXPOSE 3000

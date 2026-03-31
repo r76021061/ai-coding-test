@@ -28,10 +28,10 @@ spec:
         resources:
           requests:
             cpu: "100m"
-            memory: "128Mi"
+            memory: "256Mi"
           limits:
-            cpu: "500m"
-            memory: "512Mi"
+            cpu: "1000m"       # 允許短暫爆發（yt-dlp + ffmpeg CPU 密集）
+            memory: "1536Mi"   # 1.5 GB：音檔 base64 轉換 + Gemini 回應可能較大
         ports:
         - containerPort: 3000
         envFrom:
@@ -40,14 +40,14 @@ spec:
         - secretRef:
             name: gooaye-secrets
         volumeMounts:
-        - name: data-volume
-          mountPath: /app/data
+        - name: cache-volume
+          mountPath: /app/cache   # yt-dlp 音檔暫存目錄（下載完立即刪除）
         - name: firebase-config-volume
           mountPath: /app/firebase-applet-config.json
           subPath: firebase-applet-config.json
           readOnly: true
       volumes:
-      - name: data-volume
+      - name: cache-volume
         persistentVolumeClaim:
           claimName: gooaye-summary-pvc
       - name: firebase-config-volume

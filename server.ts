@@ -1,34 +1,29 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import nodemailer from "nodemailer";
+import basicAuth from "express-basic-auth";
 import dotenv from "dotenv";
-import https from "https";
+import path from "path";
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  setDoc,
+  where,
+} from "firebase/firestore";
 import { marked } from "marked";
 import cron from "node-cron";
-import fs from "fs";
-import path from "path";
-import { initializeApp } from "firebase/app";
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  collection,
-  query,
-  where,
-  getDocs,
-  updateDoc,
-} from "firebase/firestore";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { GoogleGenAI } from "@google/genai";
-import { exec } from "child_process";
-import util from "util";
+import nodemailer from "nodemailer";
 
-const execPromise = util.promisify(exec);
+import { initDB, getDB, processChannel, processPendingDownloads, processPendingAnalysis } from "./services/dbService";
+import { fetchRecentVideos } from "./services/youtubeService";
+import { isEmailConfigured } from "./services/emailService";
 
 dotenv.config();
 
+// ---------------------------------------------------------------------------
 // Supported Channels
+// ---------------------------------------------------------------------------
 const CHANNELS = [
   {
     id: "gooaye_videos",
@@ -56,370 +51,83 @@ const CHANNELS = [
   },
 ];
 
-let db: any;
-let storage: any;
+// ---------------------------------------------------------------------------
+// Auth middleware — protects sensitive internal routes
+// ---------------------------------------------------------------------------
+function internalAuth() {
+  const user = process.env.INTERNAL_AUTH_USER;
+  const pass = process.env.INTERNAL_AUTH_PASS;
 
-async function initDB() {
-  try {
-    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-    if (fs.existsSync(configPath)) {
-      const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      const firebaseApp = initializeApp(firebaseConfig);
-      db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
-      storage = getStorage(firebaseApp);
-      console.log("Firebase initialized.");
-    } else {
-      console.warn(
-        "firebase-applet-config.json not found. Firebase will not be initialized.",
-      );
-    }
-  } catch (error) {
-    console.error("Firebase init error:", error);
+  if (!user || !pass) {
+    console.warn(
+      "[Security] INTERNAL_AUTH_USER / INTERNAL_AUTH_PASS not set. " +
+      "Sensitive routes (/api/config, /api/trigger-cron, /api/send-email) " +
+      "will return 503 until these are configured.",
+    );
+    // Return a middleware that always rejects
+    return (_req: express.Request, res: express.Response) => {
+      res.status(503).json({
+        error: "Internal auth not configured. Set INTERNAL_AUTH_USER and INTERNAL_AUTH_PASS.",
+      });
+    };
   }
+
+  return basicAuth({
+    users: { [user]: pass },
+    challenge: true,
+    realm: "FinanceAI Internal",
+  });
 }
 
-// Helper to send email
-async function sendSummaryEmail(to: string[], subject: string, body: string) {
-  if (
-    !process.env.SMTP_HOST ||
-    !process.env.SMTP_USER ||
-    !process.env.SMTP_PASS
-  ) {
-    console.error("Email service is not configured. Cannot send cron email.");
+// ---------------------------------------------------------------------------
+// Cron Job
+// ---------------------------------------------------------------------------
+/** Runs the full pipeline: detect new videos → download → analyze */
+async function runFullPipeline(channels: typeof CHANNELS) {
+  console.log(`[Pipeline] Checking ${channels.length} channel(s)...`);
+  for (const channel of channels) {
+    await processChannel(channel);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  console.log("[Pipeline] Processing pending downloads...");
+  await processPendingDownloads();
+  console.log("[Pipeline] Processing pending analysis...");
+  await processPendingAnalysis();
+  console.log("[Pipeline] Done.");
+}
+
+function setupCronJob() {
+  if (process.env.DISABLE_CRON === "true") {
+    console.log("[Cron] DISABLE_CRON=true — cron job is OFF. Use POST /api/run-pipeline to trigger manually.");
     return;
   }
-
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || "587"),
-    secure: process.env.SMTP_PORT === "465",
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  const parsedHtml = await marked.parse(body);
-
-  const emailTemplate = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.8; color: #334155; max-width: 850px; margin: 0 auto; padding: 20px; background-color: #ffffff; font-size: 19px;">
-      <div style="text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0;">
-        <h2 style="color: #0f172a; margin: 0; font-size: 28px;">財經 AI 秘書</h2>
-        <p style="color: #64748b; font-size: 17px; margin-top: 8px;">為您整理的最新財經重點</p>
-      </div>
-      <div style="background-color: #f8fafc; padding: 32px; border-radius: 12px; border: 1px solid #e2e8f0;">
-        ${parsedHtml}
-      </div>
-      <div style="margin-top: 30px; text-align: center; font-size: 14px; color: #94a3b8; padding-top: 20px; border-top: 1px solid #e2e8f0;">
-        <p>此信件由 AI 自動摘要生成，僅供參考，不構成投資建議。</p>
-      </div>
-    </div>
-  `;
-
-  await transporter.sendMail({
-    from: `"財經 AI 秘書" <${process.env.SMTP_USER}>`,
-    to: to.join(", "),
-    subject,
-    text: body,
-    html: emailTemplate,
-  });
-}
-
-// Helper to fetch latest video
-function fetchLatestVideo(channelHandle: string, type: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const tabName = type === "streams" ? "streams" : "videos";
-    https
-      .get(`https://www.youtube.com/${channelHandle}/${tabName}`, (ytRes) => {
-        let data = "";
-        ytRes.on("data", (chunk) => (data += chunk));
-        ytRes.on("end", () => {
-          try {
-            const match = data.match(
-              /var ytInitialData = (\{.*?\});<\/script>/,
-            );
-            if (match) {
-              const json = JSON.parse(match[1]);
-              const tabs = json.contents.twoColumnBrowseResultsRenderer.tabs;
-              const videosTab = tabs.find(
-                (t: any) =>
-                  t.tabRenderer &&
-                  t.tabRenderer.content &&
-                  t.tabRenderer.content.richGridRenderer,
-              );
-              const items =
-                videosTab.tabRenderer.content.richGridRenderer.contents;
-              const latestItem = items.find(
-                (i: any) =>
-                  i.richItemRenderer &&
-                  i.richItemRenderer.content &&
-                  i.richItemRenderer.content.videoRenderer,
-              );
-
-              if (latestItem) {
-                const v = latestItem.richItemRenderer.content.videoRenderer;
-                resolve({
-                  title: v.title?.runs?.[0]?.text || "Unknown Title",
-                  videoId: v.videoId,
-                  url: "https://www.youtube.com/watch?v=" + v.videoId,
-                  date: v.publishedTimeText?.simpleText || "",
-                });
-              } else {
-                resolve(null);
-              }
-            } else {
-              resolve(null);
-            }
-          } catch (e) {
-            reject(e);
-          }
-        });
-      })
-      .on("error", reject);
-  });
-}
-
-// State Machine Logic
-async function processChannel(channel: {
-  id: string;
-  handle: string;
-  type: string;
-  name: string;
-}) {
-  try {
-    const latestVideo = await fetchLatestVideo(channel.handle, channel.type);
-    if (!latestVideo) {
-      console.log(`Could not fetch latest video for ${channel.name}.`);
-      return;
-    }
-
-    if (!db) {
-      console.warn("DB not initialized, skipping check");
-      return;
-    }
-
-    const docId = `${channel.id}_${latestVideo.videoId}`;
-    const docRef = doc(db, "video_summaries", docId);
-    const docSnap = await getDoc(docRef);
-
-    if (docSnap.exists()) {
-      console.log(
-        `Latest video already recorded for ${channel.name}:`,
-        latestVideo.title,
-      );
-      return;
-    }
-
-    console.log(`New video found for ${channel.name}:`, latestVideo.title);
-    await setDoc(docRef, {
-      channel_id: channel.id,
-      channel_name: channel.name,
-      video_id: latestVideo.videoId,
-      video_url: latestVideo.url,
-      title: latestVideo.title,
-      status: "PENDING_DOWNLOAD",
-      retries: 0,
-      created_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error(`Error in processing channel ${channel.name}:`, error);
-  }
-}
-
-let isDownloading = false;
-async function processPendingDownloads() {
-  if (!db || !storage || isDownloading) return;
-  isDownloading = true;
-  try {
-    const q = query(
-      collection(db, "video_summaries"),
-      where("status", "==", "PENDING_DOWNLOAD"),
-    );
-    const querySnapshot = await getDocs(q);
-
-    for (const document of querySnapshot.docs) {
-      const data = document.data();
-      const docRef = doc(db, "video_summaries", document.id);
-
-      try {
-        await updateDoc(docRef, { status: "DOWNLOADING" });
-
-        const cacheDir = path.join(process.cwd(), "cache");
-        if (!fs.existsSync(cacheDir))
-          fs.mkdirSync(cacheDir, { recursive: true });
-
-        const audioPath = path.join(cacheDir, `${data.video_id}.mp3`);
-
-        console.log(`Downloading audio for ${data.title}...`);
-        const cmd = `yt-dlp -x --audio-format mp3 --audio-quality 9 --postprocessor-args "-ar 16000 -ac 1 -b:a 16k" -o "${audioPath}" "${data.video_url}"`;
-        await execPromise(cmd);
-
-        console.log(`Uploading audio for ${data.title}...`);
-        const fileBuffer = fs.readFileSync(audioPath);
-        const storageRef = ref(storage, `audio_cache/${data.video_id}.mp3`);
-        await uploadBytes(storageRef, new Uint8Array(fileBuffer));
-        const audioUrl = await getDownloadURL(storageRef);
-
-        fs.unlinkSync(audioPath);
-
-        await updateDoc(docRef, {
-          status: "PENDING_ANALYSIS",
-          audio_url: audioUrl,
-        });
-        console.log(`Audio uploaded for ${data.title}`);
-      } catch (error) {
-        console.error(`Download failed for ${data.title}:`, error);
-        const newRetries = (data.retries || 0) + 1;
-        if (newRetries >= 3) {
-          await updateDoc(docRef, { status: "FAILED", retries: newRetries });
-          const emailsStr = process.env.CRON_EMAILS || "r76021061@gmail.com";
-          const emails = emailsStr.split(",").map((e) => e.trim());
-          await sendSummaryEmail(
-            emails,
-            `[財經 AI 警告] 影片下載失敗: ${data.title}`,
-            `影片 ${data.title} 連續下載失敗 3 次，請檢查系統或 Object Storage。`,
-          );
-        } else {
-          await updateDoc(docRef, {
-            status: "PENDING_DOWNLOAD",
-            retries: newRetries,
-          });
-        }
-      }
-    }
-  } finally {
-    isDownloading = false;
-  }
-}
-
-let isAnalyzing = false;
-async function processPendingAnalysis() {
-  if (!db || !storage || isAnalyzing) return;
-  isAnalyzing = true;
-  try {
-    const q = query(
-      collection(db, "video_summaries"),
-      where("status", "==", "PENDING_ANALYSIS"),
-    );
-    const querySnapshot = await getDocs(q);
-
-    for (const document of querySnapshot.docs) {
-      const data = document.data();
-      const docRef = doc(db, "video_summaries", document.id);
-
-      try {
-        await updateDoc(docRef, { status: "ANALYZING" });
-        console.log(`Analyzing audio for ${data.title}...`);
-
-        const response = await fetch(data.audio_url);
-        const arrayBuffer = await response.arrayBuffer();
-        const base64Audio = Buffer.from(arrayBuffer).toString("base64");
-
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("GEMINI_API_KEY not found");
-        const ai = new GoogleGenAI({ apiKey });
-
-        const prompt = `你是一個專業的財經分析師。請幫我總結這段 ${data.channel_name || "財經"} 的 YouTube 影片音檔。
-請用繁體中文，詳細整理出以下重點：
-1. 本集核心主題
-2. 市場趨勢與總經分析
-3. 提到的個股或產業重點
-4. 講者的個人觀點與結論`;
-
-        const aiResponse = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: [
-            {
-              inlineData: {
-                mimeType: "audio/mp3",
-                data: base64Audio,
-              },
-            },
-            prompt,
-          ],
-        });
-
-        const summaryText = aiResponse.text || "無法生成摘要";
-
-        await updateDoc(docRef, {
-          status: "COMPLETED",
-          summary: summaryText,
-          analyzed_at: new Date().toISOString(),
-        });
-        console.log(`Analysis completed for ${data.title}`);
-
-        const emailsStr = process.env.CRON_EMAILS || "r76021061@gmail.com";
-        const emails = emailsStr.split(",").map((e) => e.trim());
-        const body = `
-## 最新影片上架通知
-
-**${data.channel_name}** 剛剛發布了最新影片：
-
-### [${data.title}](${data.video_url})
-
----
-
-## 🤖 AI 重點摘要
-
-${summaryText}
-
----
-
-[👉 前往網站查看更多資訊](https://ais-pre-gbf6utyng3ppivgpw645hj-192441689969.asia-northeast1.run.app)
-        `;
-        await sendSummaryEmail(
-          emails,
-          `[財經 AI] 新片上架：${data.title}`,
-          body,
-        );
-      } catch (error) {
-        console.error(`Analysis failed for ${data.title}:`, error);
-        await updateDoc(docRef, { status: "PENDING_ANALYSIS" });
-      }
-    }
-  } finally {
-    isAnalyzing = false;
-  }
-}
-
-// Setup Cron Job
-function setupCronJob() {
-  // Run every 30 minutes
   cron.schedule(
     "*/30 * * * *",
     async () => {
       try {
-        console.log(
-          "Running scheduled video check for all channels (every 30 mins)...",
-        );
-        for (const channel of CHANNELS) {
-          await processChannel(channel);
-          // Add a small delay (5 seconds) between requests to avoid hitting YouTube too fast
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-        }
-
-        console.log("Processing pending downloads...");
-        await processPendingDownloads();
-
-        console.log("Processing pending analysis...");
-        await processPendingAnalysis();
+        console.log("Running scheduled video check for all channels (every 30 mins)...");
+        await runFullPipeline(CHANNELS);
       } catch (error) {
         console.error("Error in cron job execution:", error);
       }
     },
     { timezone: "Asia/Taipei" },
   );
-
-  console.log("Internal cron job scheduled to run every 30 minutes.");
+  console.log("Cron job scheduled: every 30 minutes.");
 }
 
+// ---------------------------------------------------------------------------
+// Server Bootstrap
+// ---------------------------------------------------------------------------
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
 
-  app.get("/api/health", (req, res) => {
+  // ----- Public routes -----
+
+  app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
       hasGeminiKey: !!process.env.GEMINI_API_KEY,
@@ -427,19 +135,21 @@ async function startServer() {
     });
   });
 
-  // API Route: Get Runtime Config (for Docker/K8s deployments where env vars are injected at runtime)
-  app.get("/api/config", (req, res) => {
+  // ----- Protected routes (require Basic Auth) -----
+
+  const auth = internalAuth();
+
+  /** Returns runtime config — protected because it exposes the Gemini API key */
+  app.get("/api/config", auth, (_req, res) => {
     res.json({ geminiApiKey: process.env.GEMINI_API_KEY });
   });
 
-  // API Route: Trigger Cron Job Manually (for K8s CronJob)
-  app.post("/api/trigger-cron", async (req, res) => {
+  /** Manually trigger the cron pipeline for a single channel (K8s CronJob use-case) */
+  app.post("/api/trigger-cron", auth, async (req, res) => {
     const { channelId } = req.body;
 
     if (!channelId) {
-      return res
-        .status(400)
-        .json({ error: "Missing channelId in request body" });
+      return res.status(400).json({ error: "Missing channelId in request body" });
     }
 
     const channel = CHANNELS.find((c) => c.id === channelId);
@@ -447,84 +157,159 @@ async function startServer() {
       return res.status(404).json({ error: "Channel not found" });
     }
 
-    // Run in background
-    processChannel(channel);
+    // Fire-and-forget — response is returned immediately
+    processChannel(channel).catch(console.error);
 
-    res.json({
-      success: true,
-      message: `Cron job triggered for ${channel.name}`,
-    });
+    res.json({ success: true, message: `Cron job triggered for ${channel.name}` });
   });
 
-  // API Route: Fetch Recent Videos
-  app.get("/api/recent-videos", (req, res) => {
-    const channelHandle = req.query.channel || "@Gooaye";
-    const type = req.query.type || "videos";
-    const tabName = type === "streams" ? "streams" : "videos";
+  /**
+   * 🧪 手動測試端點 — 直接指定一部影片 URL 進行分析。
+   *
+   * 用途：本機測試時不需等 Cron，直接把想測試的影片丟進來跑完整流程。
+   *
+   * ── 模式 A：指定影片 URL（最常用）──────────────────────────────────────
+   * POST /api/run-pipeline
+   * { "videoUrl": "https://www.youtube.com/watch?v=Xxzj8CA0LDc" }
+   *
+   * 效果：
+   *   1. 從 URL 解析 videoId
+   *   2. 在 Firestore 建立（或重置）文件，status → PENDING_DOWNLOAD
+   *   3. 執行 processPendingDownloads（yt-dlp 下載 + 上傳 Storage）
+   *   4. 執行 processPendingAnalysis（Gemini 逐字稿 + 摘要）
+   *
+   * ── 模式 B：只跑已排隊的任務（不抓新影片）─────────────────────────────
+   * POST /api/run-pipeline
+   * { "pendingOnly": true }
+   *
+   * 效果：直接跑 processPendingDownloads + processPendingAnalysis
+   * 適合：Firestore 裡已有 PENDING_DOWNLOAD 文件，只想推進處理
+   */
+  app.post("/api/run-pipeline", auth, async (req, res) => {
+    const db = getDB();
+    if (!db) {
+      return res.status(500).json({ error: "Database not initialized" });
+    }
 
-    const request = https
-      .get(`https://www.youtube.com/${channelHandle}/${tabName}`, (ytRes) => {
-        let data = "";
-        ytRes.on("data", (chunk) => {
-          data += chunk;
-        });
-        ytRes.on("end", () => {
-          try {
-            const match = data.match(
-              /var ytInitialData = (\{.*?\});<\/script>/,
-            );
-            if (match) {
-              const json = JSON.parse(match[1]);
-              const tabs = json.contents.twoColumnBrowseResultsRenderer.tabs;
-              const videosTab = tabs.find(
-                (t: any) =>
-                  t.tabRenderer &&
-                  t.tabRenderer.content &&
-                  t.tabRenderer.content.richGridRenderer,
-              );
-              const items =
-                videosTab.tabRenderer.content.richGridRenderer.contents;
+    const { videoUrl, channelId, channelName, pendingOnly } = req.body || {};
 
-              const videos = items
-                .filter(
-                  (i: any) =>
-                    i.richItemRenderer &&
-                    i.richItemRenderer.content &&
-                    i.richItemRenderer.content.videoRenderer,
-                )
-                .map((i: any) => {
-                  const v = i.richItemRenderer.content.videoRenderer;
-                  return {
-                    title: v.title?.runs?.[0]?.text || "Unknown Title",
-                    url: "https://www.youtube.com/watch?v=" + v.videoId,
-                    date: v.publishedTimeText?.simpleText || "",
-                  };
-                });
+    // ── 模式 A：指定影片 URL ────────────────────────────────────────────────
+    if (videoUrl) {
+      // Extract video ID
+      let videoId: string | null = null;
+      const vMatch = (videoUrl as string).match(/v=([^&]+)/);
+      if (vMatch) {
+        videoId = vMatch[1];
+      } else {
+        const shortMatch = (videoUrl as string).match(/youtu\.be\/([^?]+)/);
+        if (shortMatch) videoId = shortMatch[1];
+      }
 
-              res.json(videos);
-            } else {
-              res.status(500).json({ error: "Could not find video data" });
-            }
-          } catch (e) {
-            console.error("Error parsing videos", e);
-            res.status(500).json({ error: "Failed to parse videos" });
-          }
-        });
-      })
-      .on("error", (e) => {
-        console.error("Failed to fetch youtube", e);
-        res.status(500).json({ error: "Failed to fetch youtube" });
+      if (!videoId) {
+        return res.status(400).json({ error: "Cannot extract video ID from provided videoUrl" });
+      }
+
+      // Resolve channel info if channelId given, otherwise use generic label
+      const ch = CHANNELS.find((c) => c.id === channelId);
+      const resolvedChannelId = ch?.id ?? channelId ?? "manual_test";
+      const resolvedChannelName = ch?.name ?? channelName ?? "手動測試";
+
+      const docId = `${resolvedChannelId}_${videoId}`;
+      const docRef = doc(db, "video_summaries", docId);
+
+      // Always fully overwrite so we can re-test the same video cleanly
+      // (clears old transcript/summary from previous runs)
+      await setDoc(docRef, {
+        channel_id: resolvedChannelId,
+        channel_name: resolvedChannelName,
+        video_id: videoId,
+        video_url: videoUrl,
+        title: `手動測試 - ${videoId}`,
+        status: "PENDING_DOWNLOAD",
+        retries: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });  // setDoc without merge = full overwrite (clears old transcript/summary)
+
+      console.log(`[/api/run-pipeline] Queued video ${videoId} for full pipeline.`);
+
+      // Run pipeline in background
+      Promise.resolve()
+        .then(() => processPendingDownloads())
+        .then(() => processPendingAnalysis())
+        .catch((err) => console.error("[/api/run-pipeline] Error:", err));
+
+      return res.json({
+        success: true,
+        mode: "video_url",
+        docId,
+        videoId,
+        videoUrl,
+        status: "PENDING_DOWNLOAD",
+        message: "影片已加入佇列，開始執行：下載音檔 → Gemini 逐字稿 → 財經摘要",
+        note: "在 server log 中追蹤進度，或至 Firestore 查看 status 欄位變化",
+        checkStatus: `/api/summary?url=${encodeURIComponent(videoUrl as string)}`,
       });
+    }
 
-    // Add a 10-second timeout to the request
-    request.setTimeout(10000, () => {
-      request.destroy();
-      console.error("YouTube fetch timeout");
-      res.status(504).json({ error: "YouTube fetch timeout" });
+    // ── 模式 B：只跑已排隊的 pending 任務 ──────────────────────────────────
+    if (pendingOnly) {
+      console.log("[/api/run-pipeline] Running pending tasks only (no channel scrape).");
+      Promise.resolve()
+        .then(() => processPendingDownloads())
+        .then(() => processPendingAnalysis())
+        .catch((err) => console.error("[/api/run-pipeline] Error:", err));
+
+      return res.json({
+        success: true,
+        mode: "pending_only",
+        message: "正在處理 Firestore 中所有 PENDING_DOWNLOAD / PENDING_ANALYSIS 的任務",
+        note: "在 server log 中追蹤進度",
+      });
+    }
+
+    // ── 參數不足時回傳使用說明 ───────────────────────────────────────────────
+    return res.status(400).json({
+      error: "Missing required parameter",
+      usage: {
+        "模式A_指定影片": {
+          method: "POST",
+          path: "/api/run-pipeline",
+          body: {
+            videoUrl: "https://www.youtube.com/watch?v=Xxzj8CA0LDc",
+            channelId: "(optional) gooaye_videos",
+            channelName: "(optional) 股癌 Gooaye",
+          },
+        },
+        "模式B_只跑排隊任務": {
+          method: "POST",
+          path: "/api/run-pipeline",
+          body: { pendingOnly: true },
+        },
+      },
+      availableChannelIds: CHANNELS.map((c) => ({ id: c.id, name: c.name })),
     });
   });
 
-  // API Route: Get Cached Summary or Trigger Processing
+  /** Fetch recent videos from a YouTube channel page */
+  app.get("/api/recent-videos", async (req, res) => {
+    const channelHandle = (req.query.channel as string) || "@Gooaye";
+    const type = (req.query.type as string) || "videos";
+
+    try {
+      const videos = await fetchRecentVideos(channelHandle, type);
+      res.json(videos);
+    } catch (e: any) {
+      if (e.message === "YouTube fetch timeout") {
+        res.status(504).json({ error: "YouTube fetch timeout" });
+      } else {
+        console.error("Failed to fetch YouTube videos:", e);
+        res.status(500).json({ error: "Failed to fetch videos" });
+      }
+    }
+  });
+
+  /** Get cached AI summary for a video URL, or enqueue it for processing */
   app.get("/api/summary", async (req, res) => {
     const url = req.query.url as string;
     const channelId = (req.query.channelId as string) || "unknown";
@@ -533,22 +318,21 @@ async function startServer() {
     if (!url) {
       return res.status(400).json({ error: "Missing url parameter" });
     }
+
+    const db = getDB();
     if (!db) {
       return res.status(500).json({ error: "Database not initialized" });
     }
+
     try {
       // Extract video ID from URL
-      let videoId = "";
+      let videoId: string;
       const vMatch = url.match(/v=([^&]+)/);
       if (vMatch) {
         videoId = vMatch[1];
       } else {
         const shortMatch = url.match(/youtu\.be\/([^?]+)/);
-        if (shortMatch) {
-          videoId = shortMatch[1];
-        } else {
-          videoId = encodeURIComponent(url); // Fallback
-        }
+        videoId = shortMatch ? shortMatch[1] : encodeURIComponent(url);
       }
 
       const q = query(
@@ -562,78 +346,63 @@ async function startServer() {
         if (docData.status === "COMPLETED") {
           return res.json({ summary: docData.summary, status: "COMPLETED" });
         } else if (docData.status === "FAILED") {
-          return res.json({
-            summary: "分析失敗，請聯絡管理員。",
-            status: "FAILED",
-          });
+          return res.json({ summary: "分析失敗，請聯絡管理員。", status: "FAILED" });
         } else {
-          return res.json({
-            summary: "資料分析中，請稍後再試...",
-            status: docData.status,
-          });
+          return res.json({ summary: "資料分析中，請稍後再試...", status: docData.status });
         }
-      } else {
-        // Not found, trigger processing
-        const docId = `${channelId}_${videoId}`;
-        const docRef = doc(db, "video_summaries", docId);
-
-        await setDoc(docRef, {
-          channel_id: channelId,
-          channel_name: channelName,
-          video_id: videoId,
-          video_url: url,
-          title: "Requested via Web",
-          status: "PENDING_DOWNLOAD",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          download_attempts: 0,
-        });
-
-        // Trigger background processing asynchronously
-        setTimeout(() => {
-          processPendingDownloads()
-            .then(() => processPendingAnalysis())
-            .catch(console.error);
-        }, 1000);
-
-        return res.json({
-          summary: "已加入分析排程，資料分析中，請稍後再試...",
-          status: "PENDING_DOWNLOAD",
-        });
       }
+
+      // Not found — create a new task with consistent field names
+      const docId = `${channelId}_${videoId}`;
+      const docRef = doc(db, "video_summaries", docId);
+
+      await setDoc(docRef, {
+        channel_id: channelId,
+        channel_name: channelName,
+        video_id: videoId,
+        video_url: url,
+        title: "Requested via Web",
+        status: "PENDING_DOWNLOAD",
+        retries: 0,                        // ← was incorrectly "download_attempts" before
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      // Kick off background processing asynchronously
+      setTimeout(() => {
+        processPendingDownloads()
+          .then(() => processPendingAnalysis())
+          .catch(console.error);
+      }, 1000);
+
+      return res.json({
+        summary: "已加入分析排程，資料分析中，請稍後再試...",
+        status: "PENDING_DOWNLOAD",
+      });
     } catch (error) {
       console.error("Error fetching summary from DB:", error);
       res.status(500).json({ error: "Database error" });
     }
   });
 
-  // API Route: Check Email Config Status
-  app.get("/api/email-status", (req, res) => {
+  /** Check SMTP configuration status */
+  app.get("/api/email-status", (_req, res) => {
     const required = ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"];
     const missing = required.filter((key) => !process.env[key]);
-    res.json({
-      configured: missing.length === 0,
-      missing: missing,
-    });
+    res.json({ configured: missing.length === 0, missing });
   });
 
-  // API Route: Send Email
-  app.post("/api/send-email", async (req, res) => {
+  /** Send an arbitrary email — protected to prevent SMTP abuse */
+  app.post("/api/send-email", auth, async (req, res) => {
     const { to, subject, body } = req.body;
 
     if (!to || !subject || !body) {
-      return res.status(400).json({ error: "Missing required fields" });
+      return res.status(400).json({ error: "Missing required fields: to, subject, body" });
     }
 
-    // Check if SMTP is configured
-    if (
-      !process.env.SMTP_HOST ||
-      !process.env.SMTP_USER ||
-      !process.env.SMTP_PASS
-    ) {
+    if (!isEmailConfigured()) {
       return res.status(500).json({
-        error:
-          "Email service is not configured. Please set SMTP environment variables.",
+        error: "Email service is not configured. Please set SMTP environment variables.",
       });
     }
 
@@ -642,15 +411,11 @@ async function startServer() {
         host: process.env.SMTP_HOST,
         port: parseInt(process.env.SMTP_PORT || "587"),
         secure: process.env.SMTP_PORT === "465",
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       });
 
       const parsedHtml = await marked.parse(body);
-
-      const emailTemplate = `
+      const html = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #334155; max-width: 650px; margin: 0 auto; padding: 20px; background-color: #ffffff;">
           <div style="text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0;">
             <h2 style="color: #0f172a; margin: 0; font-size: 24px;">知名財經 YouTuber AI</h2>
@@ -670,7 +435,7 @@ async function startServer() {
         to,
         subject,
         text: body,
-        html: emailTemplate,
+        html,
       });
 
       res.json({ success: true, message: "Email sent successfully" });
@@ -680,7 +445,8 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
+  // ----- Static / Vite middleware -----
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -689,12 +455,12 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(process.cwd(), "dist")));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(process.cwd(), "dist", "index.html"));
     });
   }
 
-  // Global error handler for URIError (malicious scans)
+  // Global error handler (catches URIError from malicious scans, etc.)
   app.use(
     (
       err: any,
@@ -703,9 +469,7 @@ async function startServer() {
       next: express.NextFunction,
     ) => {
       if (err instanceof URIError) {
-        console.warn(
-          `[Security] Caught URIError from ${req.ip}: ${req.originalUrl}`,
-        );
+        console.warn(`[Security] Caught URIError from ${req.ip}: ${req.originalUrl}`);
         return res.status(400).send("Bad Request");
       }
       next(err);

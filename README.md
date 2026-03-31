@@ -1,10 +1,146 @@
-# Gooaye Summary App - Kubernetes 部署指南
+# 財經 AI 秘書 - 系統說明與部署指南
 
 👉 **[查看開發日誌 (Changelog)](./CHANGELOG.md)**
 
-本專案包含將「股癌/游庭皓影片摘要服務」部署至 Kubernetes (K8s) 的相關設定檔。
+本專案是一套自動化財經影片分析系統，定時抓取 YouTube 頻道新影片，透過 Gemini AI 生成逐字稿與財經重點摘要，並以 Email 主動通知使用者。
+
+---
+
+## 🗺️ 系統架構與工作流程
+
+### 整體架構
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Cloud Run / GKE                         │
+│                                                             │
+│   ┌──────────┐    ┌───────────────────────────────────┐    │
+│   │  Cron    │    │           Express Server           │    │
+│   │ 每30分鐘 │    │  /api/summary  /api/recent-videos  │    │
+│   └────┬─────┘    └──────────────┬────────────────────┘    │
+│        │                         │                          │
+└────────┼─────────────────────────┼──────────────────────────┘
+         │                         │
+         ▼                         ▼
+   YouTube 頻道頁面           Firestore DB
+   (HTML 解析抓片)            (video_summaries)
+         │
+         ▼
+    yt-dlp 下載音檔
+         │
+         ▼
+   Firebase Storage
+   (audio_cache/*.mp3)
+         │
+         ▼
+   Gemini API
+   ① 逐字稿 (transcript)
+   ② 財經摘要 (summary)
+         │
+         ▼
+   Email 通知寄出
+```
+
+---
+
+### 📌 Cron Job 完整流程（每 30 分鐘自動執行）
+
+```mermaid
+flowchart TD
+    A([⏰ Cron 觸發 / K8s CronJob]) --> B
+
+    subgraph B [1️⃣ processChannel — 偵測新影片]
+        B1[抓取 YouTube 頻道頁面 HTML] --> B2[解析 ytInitialData 取得最新影片 ID]
+        B2 --> B3{Firestore 已有此影片?}
+        B3 -- 有 --> B4([略過])
+        B3 -- 沒有 --> B5[寫入 Firestore\nstatus: PENDING_DOWNLOAD\nretries: 0]
+    end
+
+    B5 --> C
+
+    subgraph C [2️⃣ processPendingDownloads — 下載音檔]
+        C1[查詢所有 PENDING_DOWNLOAD 文件] --> C2
+        C2[runTransaction 原子搶佔任務\nPENDING_DOWNLOAD → DOWNLOADING] --> C3{搶到?}
+        C3 -- 否，已被其他副本取走 --> C4([跳過，防多副本重複])
+        C3 -- 是 --> C5["yt-dlp 下載音檔\n(.mp3, 16kHz mono)"]
+        C5 --> C6[上傳到 Firebase Storage]
+        C6 --> C7[更新 status → PENDING_ANALYSIS\n儲存 audio_url]
+        C5 -- 失敗 --> C8{retries >= 3?}
+        C8 -- 是 --> C9[status → FAILED\n寄送警告 Email]
+        C8 -- 否 --> C10[status → PENDING_DOWNLOAD\nretries + 1]
+    end
+
+    C7 --> D
+
+    subgraph D [3️⃣ processPendingAnalysis — AI 分析]
+        D1[查詢所有 PENDING_ANALYSIS 文件] --> D2
+        D2[runTransaction 原子搶佔任務\nPENDING_ANALYSIS → ANALYZING] --> D3{搶到?}
+        D3 -- 否 --> D4([跳過])
+        D3 -- 是 --> D5["① Gemini 聽音檔\n生成繁體中文逐字稿 transcript"]
+        D5 --> D6[存入 Firestore.transcript]
+        D6 --> D7["② Gemini 分析逐字稿文字\n生成財經重點摘要 summary"]
+        D7 --> D8[存入 Firestore\nstatus → COMPLETED]
+        D8 --> D9[寄送摘要 Email 通知]
+        D5 -- 失敗 --> D10[status → PENDING_ANALYSIS\n等下次 Cron 重試]
+    end
+```
+
+---
+
+### 📱 使用者點擊 APP 時的流程
+
+```mermaid
+flowchart TD
+    U([👤 使用者點擊影片]) --> A[GET /api/summary?url=...]
+    A --> B{Firestore 有此影片?}
+
+    B -- 有，COMPLETED --> C([✅ 直接回傳摘要與逐字稿])
+    B -- 有，FAILED --> D([❌ 顯示「分析失敗，請聯絡管理員」])
+    B -- "有，處理中\n(DOWNLOADING / ANALYZING...)" --> E([⏳ 顯示「資料分析中，請稍後再試」])
+
+    B -- 沒有 --> F[建立新文件\nstatus: PENDING_DOWNLOAD]
+    F --> G[背景觸發下載+分析流程]
+    G --> H([⏳ 顯示「已加入排程，請稍後再試」])
+```
+
+---
+
+### 🗄️ Firestore 文件欄位說明（`video_summaries` collection）
+
+| 欄位 | 類型 | 說明 |
+|------|------|------|
+| `status` | string | 狀態機：`PENDING_DOWNLOAD` → `DOWNLOADING` → `PENDING_ANALYSIS` → `ANALYZING` → `COMPLETED` / `FAILED` |
+| `channel_id` | string | 頻道識別碼（如 `gooaye_videos`） |
+| `channel_name` | string | 頻道顯示名稱 |
+| `video_id` | string | YouTube 影片 ID |
+| `video_url` | string | 完整影片網址 |
+| `audio_url` | string | Firebase Storage 音檔下載網址 |
+| `transcript` | string | **Gemini 生成的完整逐字稿**（可人工閱讀與反覆分析）|
+| `summary` | string | Gemini 財經重點摘要（Markdown 格式） |
+| `retries` | number | 下載失敗重試次數（≥ 3 次改為 FAILED） |
+| `created_at` | string | ISO 8601 建立時間 |
+| `analyzed_at` | string | 分析完成時間 |
+
+---
+
+### 🔒 API 存取控制
+
+| 路由 | 方法 | 保護 | 說明 |
+|------|------|------|------|
+| `/api/health` | GET | 公開 | 健康檢查 |
+| `/api/recent-videos` | GET | 公開 | 取得頻道近期影片列表 |
+| `/api/summary` | GET | 公開 | 取得/觸發影片摘要 |
+| `/api/email-status` | GET | 公開 | 查詢 SMTP 設定狀態 |
+| `/api/config` | GET | 🔐 Basic Auth | 回傳 Gemini API Key（敏感） |
+| `/api/trigger-cron` | POST | 🔐 Basic Auth | 手動觸發單一頻道處理 |
+| `/api/send-email` | POST | 🔐 Basic Auth | 手動發送電子郵件 |
+
+> Basic Auth 需設定環境變數 `INTERNAL_AUTH_USER` 與 `INTERNAL_AUTH_PASS`。
+
+---
 
 ## 環境準備 (非常重要)
+
 
 因為資安考量，Firebase 的設定檔 `firebase-applet-config.json` 已經被加入 `.gitignore`，不會跟著程式碼上傳到 GitHub。
 因此，在您進行**本機開發**或**打包 Docker Image** 之前，請務必在專案根目錄手動建立此檔案：
@@ -33,16 +169,39 @@
 請**務必在 apply 其他 yaml 檔案之前**，先在您的 K8s 叢集中執行以下指令建立 Secret：
 
 ```bash
-# 建立環境變數 Secret
+# ── 首次建立（全新部署）──────────────────────────────────────────────────────
 kubectl create secret generic gooaye-secrets \
   --from-literal=GEMINI_API_KEY="您的_GEMINI_API_KEY" \
   --from-literal=SMTP_USER="您的_GMAIL_帳號" \
-  --from-literal=SMTP_PASS="您的_GMAIL_應用程式密碼"
+  --from-literal=SMTP_PASS="您的_GMAIL_應用程式密碼" \
+  --from-literal=INTERNAL_AUTH_USER="admin" \
+  --from-literal=INTERNAL_AUTH_PASS="您設定的強密碼"
 
 # 建立 Firebase 設定檔 Secret (從檔案掛載)
 kubectl create secret generic firebase-config-secret \
   --from-file=firebase-applet-config.json=./firebase-applet-config.json
 ```
+
+> **⚠️ 升級 v3.4.0 的現有用戶（Secret 已存在）**
+> `kubectl patch secret` 不支援新增欄位，必須先刪再建：
+>
+> ```bash
+> # 先刪除舊的 Secret
+> kubectl delete secret gooaye-secrets
+>
+> # 重新建立（加入 v3.4.0 新增的 INTERNAL_AUTH_USER / INTERNAL_AUTH_PASS）
+> kubectl create secret generic gooaye-secrets \
+>   --from-literal=GEMINI_API_KEY="您的_GEMINI_API_KEY" \
+>   --from-literal=SMTP_USER="您的_GMAIL_帳號" \
+>   --from-literal=SMTP_PASS="您的_GMAIL_應用程式密碼" \
+>   --from-literal=INTERNAL_AUTH_USER="admin" \
+>   --from-literal=INTERNAL_AUTH_PASS="您設定的強密碼"
+> ```
+>
+> 完成後重啟 Pod 讓新的 Secret 生效：
+> ```bash
+> kubectl rollout restart deployment/gooaye-summary-app
+> ```
 
 ### 2. 套用 Kubernetes 設定檔
 建立好 Secret 之後，接著套用所有的 YAML 設定檔：

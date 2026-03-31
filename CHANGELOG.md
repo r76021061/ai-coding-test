@@ -2,6 +2,57 @@
 
 這裡記錄了本系統所有的版本更新與功能變更。
 
+## [Release 3.4.0] - 2026-03-31
+
+### ✨ 新增功能 (Added)
+- **AI 逐字稿儲存**：AI 分析流程從「直接生成摘要」升級為**兩階段處理**：
+  1. **第一次 Gemini 呼叫**：將音檔轉錄為完整繁體中文逐字稿，存入 Firestore `transcript` 欄位
+  2. **第二次 Gemini 呼叫**：基於逐字稿文字生成财经重點摘要，存入 `summary` 欄位
+  - 好處：逐字稿可供人工審閱確認品質；未來若需調整 Prompt 可直接重分析，無需重新下載音檔；text token 費用遠低於 audio token
+- **README 系統流程圖**：README.md 新增完整的 Mermaid 流程圖，涵蓋 Cron Job 三階段流程、使用者請求流程、Firestore 欄位說明與 API 存取控制表，方便日後討論與 Onboarding
+
+### 🏗️ 架構重構 (Architecture Refactoring)
+- **程式碼模組化**：`server.ts` 從 723 行拆分為 4 個獨立 Service 模組：
+  - `services/youtubeService.ts`：YouTube 頁面爬取邏輯
+  - `services/emailService.ts`：Email 發送（含 transporter 複用）
+  - `services/aiService.ts`：Gemini AI 逐字稿與摘要
+  - `services/dbService.ts`：Firestore 初始化與狀態機邏輯
+  - `server.ts` 縮減至 ~250 行，僅負責 Express 路由
+- **多副本競爭鎖定 (Firestore Transaction)**：`processPendingDownloads` 與 `processPendingAnalysis` 改用 `runTransaction` 原子性搶佔任務，確保 Cloud Run / Kubernetes 多副本環境下絕不重複處理同一影片
+- **移除全域旗標**：移除 `isDownloading` / `isAnalyzing` 全域變數，由 Transaction 機制取代
+
+### 🛡️ 資安修正 (Security)
+- **保護敏感 API 路由**：使用 `express-basic-auth` 保護以下路由（需設定 `INTERNAL_AUTH_USER` / `INTERNAL_AUTH_PASS`）：
+  - `GET /api/config`（原本完全公開，會洩漏 Gemini API Key）
+  - `POST /api/trigger-cron`（防任意人觸發工作排程）
+  - `POST /api/send-email`（防濫用 SMTP 伺服器發信）
+- **Fail-safe 設計**：若 auth 環境變數未設定，受保護路由回傳 503 並提示設定說明，不留空白門洞
+
+### 🐛 問題修正 (Bug Fixes)
+- **欄位命名不一致修正**：`/api/summary` 在建立新文件時使用了 `download_attempts: 0`，但 `processPendingDownloads` 實際讀取的是 `retries` 欄位，導致手動觸發任務失敗時重試計數永遠不增加。已統一改為 `retries: 0`
+- **音檔大小防護**：yt-dlp 參數加入 `--max-filesize 100m`，防止超大型直播錄影導致記憶體耗盡 (OOM)
+- **Dockerfile 修正**：加入 `COPY services/ ./services/`，修正 v3.4.0 模組化後容器啟動即 crash 的問題
+
+### 🏗️ GKE 設定更新 (Infrastructure)
+- **`cronjob.yaml`**：
+  - 新增 Basic Auth 到所有 curl 指令（從 `gooaye-secrets` 讀取 `INTERNAL_AUTH_USER` / `INTERNAL_AUTH_PASS`），修正 v3.4.0 後 CronJob 全部回傳 401 的問題
+  - 新增 `concurrencyPolicy: Forbid`，防止前一個 Job 還沒跑完就觸發下一個（避免重複下載相同影片）
+  - 新增 `successfulJobsHistoryLimit: 3` / `failedJobsHistoryLimit: 3`，方便查歷史紀錄
+  - `s178-streams-summary-cron` 排程從 `0 18` 改為 `10 18`（錯開 10 分鐘），避免影片和直播兩個 Job 同時搶伺服器資源
+- **`configmap.yaml`**：移除已廢棄的 `DB_PATH` (SQLite) 設定，並新增 `INTERNAL_AUTH_USER / INTERNAL_AUTH_PASS` 說明
+- **`deployment.yaml`**：
+  - 記憶體限制從 `512Mi` 提升至 `1536Mi`（1.5 GB），防止音檔 base64 轉換 + Gemini 回應造成 OOM
+  - CPU 限制從 `500m` 提升至 `1000m`，允許 yt-dlp / ffmpeg 短暫 CPU 爆發
+  - PVC 掛載路徑從 `/app/data` 修正為 `/app/cache`（對應 yt-dlp 暫存目錄）
+
+### 🧪 測試工具 (Testing)
+- **`POST /api/run-pipeline`**（新 API）：本機測試專用端點，無需等待 Cron Job：
+  - **模式 A**：直接指定影片 URL（如 `?videoUrl=https://youtu.be/xxx`），不管 YouTube 上有幾百部影片，只測這一部
+  - **模式 B**：帶 `pendingOnly: true`，只推進 Firestore 中已排隊的任務（適合任務卡住時手動重試）
+  - 不帶參數時回傳 400 + 完整使用說明
+- **`DISABLE_CRON=true`**：設定此環境變數可完全關閉內建 30 分鐘 Cron，搭配 `/api/run-pipeline` 進行完全受控的手動測試
+
+
 ## [Release 3.3.3] - 2026-03-20
 
 ### 💄 介面優化與隱私修正 (UI & Privacy)

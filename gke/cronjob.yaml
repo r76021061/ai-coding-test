@@ -1,11 +1,20 @@
-# 股癌 (Gooaye) 的 CronJob
+# ⚠️ 重要：/api/trigger-cron 自 v3.4.0 起需要 Basic Auth
+# 請確保 gooaye-secrets 中已加入：
+#   INTERNAL_AUTH_USER=<帳號>
+#   INTERNAL_AUTH_PASS=<密碼>
+# curl 的 -u 參數會從 Secret 注入的環境變數讀取
+
+# 股癌 (Gooaye) 的 CronJob — 每天晚上 21:00
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: gooaye-summary-cron
 spec:
-  schedule: "0 21 * * *" # 每天晚上 21:00 (UTC 時間請依據您的 K8s 節點時區調整)
-  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  schedule: "0 21 * * *"
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid      # 防止上一個 Job 還沒跑完就觸發下一個
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       template:
@@ -21,21 +30,41 @@ spec:
           - name: trigger-cron
             image: curlimages/curl:latest
             imagePullPolicy: IfNotPresent
+            env:
+            - name: AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_USER
+            - name: AUTH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_PASS
             command:
             - /bin/sh
             - -c
-            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"gooaye_videos\"}'"
+            - |
+              curl -f -X POST http://gooaye-summary-service:80/api/trigger-cron \
+                -u "${AUTH_USER}:${AUTH_PASS}" \
+                -H "Content-Type: application/json" \
+                -d '{"channelId": "gooaye_videos"}' \
+                && echo "✅ gooaye_videos triggered" \
+                || echo "❌ Failed to trigger gooaye_videos"
           restartPolicy: OnFailure
 
 ---
-# 游庭皓的財經皓角 的 CronJob
+# 游庭皓的財經皓角 的 CronJob — 每天早上 08:30
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: yutinghao-summary-cron
 spec:
-  schedule: "30 8 * * *" # 每天早上 08:30
-  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  schedule: "30 8 * * *"
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       template:
@@ -51,21 +80,41 @@ spec:
           - name: trigger-cron
             image: curlimages/curl:latest
             imagePullPolicy: IfNotPresent
+            env:
+            - name: AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_USER
+            - name: AUTH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_PASS
             command:
             - /bin/sh
             - -c
-            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"yutinghao_streams\"}'"
+            - |
+              curl -f -X POST http://gooaye-summary-service:80/api/trigger-cron \
+                -u "${AUTH_USER}:${AUTH_PASS}" \
+                -H "Content-Type: application/json" \
+                -d '{"channelId": "yutinghao_streams"}' \
+                && echo "✅ yutinghao_streams triggered" \
+                || echo "❌ Failed to trigger yutinghao_streams"
           restartPolicy: OnFailure
 
 ---
-# 郭哲榮分析師 的 CronJob (影片)
+# 郭哲榮分析師 的 CronJob (影片) — 每天傍晚 18:00
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: s178-videos-summary-cron
 spec:
-  schedule: "0 18 * * *" # 每天傍晚 18:00
-  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  schedule: "0 18 * * *"
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       template:
@@ -81,21 +130,41 @@ spec:
           - name: trigger-cron
             image: curlimages/curl:latest
             imagePullPolicy: IfNotPresent
+            env:
+            - name: AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_USER
+            - name: AUTH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_PASS
             command:
             - /bin/sh
             - -c
-            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"s178_videos\"}'"
+            - |
+              curl -f -X POST http://gooaye-summary-service:80/api/trigger-cron \
+                -u "${AUTH_USER}:${AUTH_PASS}" \
+                -H "Content-Type: application/json" \
+                -d '{"channelId": "s178_videos"}' \
+                && echo "✅ s178_videos triggered" \
+                || echo "❌ Failed to trigger s178_videos"
           restartPolicy: OnFailure
 
 ---
-# 郭哲榮分析師 的 CronJob (直播)
+# 郭哲榮分析師 的 CronJob (直播) — 每天傍晚 18:10（錯開5分鐘避免同時搶資源）
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: s178-streams-summary-cron
 spec:
-  schedule: "0 18 * * *" # 每天傍晚 18:00
-  timeZone: "Asia/Taipei" # K8s v1.27+ 支援
+  schedule: "10 18 * * *"   # 原為 0 18，改為 10 18 與影片 CronJob 錯開
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       template:
@@ -111,8 +180,25 @@ spec:
           - name: trigger-cron
             image: curlimages/curl:latest
             imagePullPolicy: IfNotPresent
+            env:
+            - name: AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_USER
+            - name: AUTH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: gooaye-secrets
+                  key: INTERNAL_AUTH_PASS
             command:
             - /bin/sh
             - -c
-            - "curl -X POST http://gooaye-summary-service:80/api/trigger-cron -H 'Content-Type: application/json' -d '{\"channelId\": \"s178_streams\"}'"
+            - |
+              curl -f -X POST http://gooaye-summary-service:80/api/trigger-cron \
+                -u "${AUTH_USER}:${AUTH_PASS}" \
+                -H "Content-Type: application/json" \
+                -d '{"channelId": "s178_streams"}' \
+                && echo "✅ s178_streams triggered" \
+                || echo "❌ Failed to trigger s178_streams"
           restartPolicy: OnFailure
